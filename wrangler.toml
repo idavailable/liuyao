@@ -17,4 +17,19 @@ database_id = "42279a23-7032-42bb-b675-bb7a2015fcc0"
 # Gemini 走 CF AI Gateway 原生路径（绕开 Google 对数据中心 IP 的拒绝），并关闭 thinking
 GEMINI_BASE_URL = "https://gateway.ai.cloudflare.com/v1/88497ab707363a498e48af20a3d52aa9/liuyao-gw/google-ai-studio/v1beta"
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+
+# ---- GPT / OpenAI 兼容供应商（后台也可直接设这三个变量）----
+# GPT_API_KEY / GPT_BASE_URL / GPT_MODELS（逗号分隔模型名）
+# 注意：本文件里写的 vars 会覆盖 Pages 后台的同名"文本"变量（secret 不受影响）；
+# 用 wrangler CLI 部署时，改后台变量需同步改到这里。
+
+# ---- 自定义供应商（任意 OpenAI 兼容接口：Kimi/Qwen/GLM/硅基流动/中转站等）----
+# 后台设两个变量即可让模型出现在页面芯片上：
+#   1) 文本变量 CUSTOM_PROVIDERS = JSON 数组，例如：
+#      [{"id":"kimi","label":"Moonshot","base":"https://api.moonshot.cn/v1","models":["kimi-k2"]},
+#       {"id":"qwen","label":"阿里云","base":"https://dashscope.aliyuncs.com/compatible-mode/v1","models":["qwen3-max","qwen3-plus"]}]
+#   2) 密钥变量 <ID大写>_API_KEY，如 KIMI_API_KEY、QWEN_API_KEY
+# 若用 wrangler CLI 部署，需把 CUSTOM_PROVIDERS 同步写到这里（JSON 写成单行字符串）：
+# CUSTOM_PROVIDERS = '[{"id":"kimi","label":"Moonshot","base":"https://api.moonshot.cn/v1","models":["kimi-k2"]}]'
+
 # ACCESS_CODE = ""   # 选填：访问口令；设置后页面首次调用会提示输入

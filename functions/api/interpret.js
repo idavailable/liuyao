@@ -31,14 +31,32 @@ const SYSTEM_PROMPT = [
 // 各供应商可用模型白名单（服务端校验，防止任意模型名注入）
 // GPT（OpenAI 兼容接口）的模型清单由环境变量 GPT_MODELS 配置（逗号分隔），
 // 后台即可增删模型，无需改代码；默认为 2026-09 OpenAI 主力三档
+// 自定义供应商：环境变量 CUSTOM_PROVIDERS（JSON 数组），每个元素
+//   { "id": "kimi", "label": "Moonshot", "base": "https://api.moonshot.cn/v1", "models": ["kimi-k2"] }
+// id 需为小写字母数字；对应密钥环境变量为 <ID大写>_API_KEY（如 KIMI_API_KEY，后台设为 secret）
+// 接口须兼容 OpenAI chat/completions 协议（Kimi/Qwen/GLM/硅基流动/中转站等均支持）
+function customProviders(env) {
+  try {
+    const arr = JSON.parse(env.CUSTOM_PROVIDERS || '[]');
+    if (!Array.isArray(arr)) return [];
+    return arr.filter(function (p) {
+      return p && typeof p.id === 'string' && /^[a-z][a-z0-9]*$/.test(p.id) &&
+        Array.isArray(p.models) && p.models.length;
+    });
+  } catch (e) { return []; }
+}
+function customKeyEnv(id) { return id.toUpperCase().replace(/[^A-Z0-9]/g, '_') + '_API_KEY'; }
+
 function modelWhitelist(env) {
   const gptModels = (env.GPT_MODELS || 'gpt-6-luna,gpt-6-sol,gpt-6-astra')
     .split(',').map(function (s) { return s.trim(); }).filter(Boolean);
-  return {
+  const wl = {
     gemini: ['gemini-3.6-flash', 'gemini-3.8-flash'],
     deepseek: ['deepseek-flash', 'deepseek-v4-pro'],
     gpt: gptModels
   };
+  customProviders(env).forEach(function (p) { wl[p.id] = p.models.slice(0, 8); });
+  return wl;
 }
 
 function providerConfig(env, provider) {
@@ -64,10 +82,23 @@ function providerConfig(env, provider) {
       base: (env.GPT_BASE_URL || env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '')
     };
   }
+  // 自定义供应商（CUSTOM_PROVIDERS 声明的），密钥取 <ID>_API_KEY
+  const cp = customProviders(env).filter(function (p) { return p.id === provider; })[0];
+  if (cp) {
+    return {
+      name: provider,
+      key: env[customKeyEnv(provider)] || '',
+      base: (cp.base || 'https://api.openai.com/v1').replace(/\/$/, '')
+    };
+  }
   return null;
 }
 
 function inferProvider(model, wl) {
+  const customs = Object.keys(wl).filter(function (k) { return k !== 'gemini' && k !== 'deepseek' && k !== 'gpt'; });
+  for (let i = 0; i < customs.length; i++) {
+    if (wl[customs[i]].indexOf(model) >= 0) return customs[i];
+  }
   if (wl.gemini.indexOf(model) >= 0) return 'gemini';
   if (wl.deepseek.indexOf(model) >= 0) return 'deepseek';
   if (wl.gpt.indexOf(model) >= 0) return 'gpt';

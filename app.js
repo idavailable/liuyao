@@ -250,15 +250,14 @@
       (parts.length > 1 ? ' ' + parts.slice(1).join(' ') : '');
   }
 
-  function applyModels(list, gptConfigured) {
+  function applyModels(list) {
     if (!Array.isArray(list) || !list.length) return;
     MODELS = list.map(function (m) {
       return {
         id: m.id,
         pv: m.pv || '',
         label: modelLabel(m.id),
-        tip: (m.pv === 'OpenAI' && gptConfigured === false) ? '后台未配 GPT key'
-          : (MODEL_TIPS[m.id] || '')
+        tip: (m.configured === false) ? '后台未配 key' : (MODEL_TIPS[m.id] || '')
       };
     });
     selModels = loadSelModels();
@@ -270,7 +269,7 @@
       const res = await fetch('/api/models');
       if (!res.ok) return;
       const data = await res.json();
-      applyModels(data.models, data.gptConfigured);
+      applyModels(data.models);
     } catch (e) { /* 本地打开或接口不存在时保留默认清单 */ }
   }
 
