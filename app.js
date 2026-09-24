@@ -220,13 +220,59 @@
   }
 
   // ---------- AI 断卦 / 进阶探讨 / 卦例库（多模型对比） ----------
-  const MODELS = [
+  // 模型清单：初始为内置默认，页面加载后从 /api/models 动态拉取（GPT 清单由后台 GPT_MODELS 变量驱动）
+  let MODELS = [
     { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', pv: 'Google', tip: '快' },
     { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', pv: 'Google', tip: '高峰期易过载' },
     { id: 'deepseek-flash', label: 'DeepSeek Flash', pv: 'DeepSeek', tip: '快' },
     { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', pv: 'DeepSeek', tip: '深推理 · 慢' }
   ];
   const DEFAULT_MODELS = ['gemini-3.6-flash', 'deepseek-flash'];
+
+  // 已知模型的特性提示；后台自定义的模型名无提示
+  const MODEL_TIPS = {
+    'gemini-3.6-flash': '快',
+    'gemini-3.8-flash': '高峰期易过载',
+    'deepseek-flash': '快',
+    'deepseek-v4-pro': '深推理 · 慢',
+    'gpt-6-luna': '便宜 · 快',
+    'gpt-6-sol': '均衡',
+    'gpt-6-astra': '最强 · 贵'
+  };
+
+  // 模型名美化：gemini-3.6-flash → Gemini 3.6 Flash；gpt-6-luna → GPT 6 Luna
+  function modelLabel(id) {
+    const parts = id.split('-');
+    if (parts[0] === 'gpt' || parts[0] === 'o1' || parts[0] === 'o3') {
+      return parts[0].toUpperCase() + ' ' + parts.slice(1).join(' ');
+    }
+    return parts[0].charAt(0).toUpperCase() + parts[0].slice(1) +
+      (parts.length > 1 ? ' ' + parts.slice(1).join(' ') : '');
+  }
+
+  function applyModels(list, gptConfigured) {
+    if (!Array.isArray(list) || !list.length) return;
+    MODELS = list.map(function (m) {
+      return {
+        id: m.id,
+        pv: m.pv || '',
+        label: modelLabel(m.id),
+        tip: (m.pv === 'OpenAI' && gptConfigured === false) ? '后台未配 GPT key'
+          : (MODEL_TIPS[m.id] || '')
+      };
+    });
+    selModels = loadSelModels();
+    renderModelChips();
+  }
+
+  async function loadModels() {
+    try {
+      const res = await fetch('/api/models');
+      if (!res.ok) return;
+      const data = await res.json();
+      applyModels(data.models, data.gptConfigured);
+    } catch (e) { /* 本地打开或接口不存在时保留默认清单 */ }
+  }
 
   let selModels = loadSelModels();
   let aiStates = {};   // { modelId: { history: [] } }
@@ -448,6 +494,7 @@
 
   // ---------- init ----------
   renderModelChips();
+  loadModels();
   renderTime();
   renderCoins();
   renderTossHint();

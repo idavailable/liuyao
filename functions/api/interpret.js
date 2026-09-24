@@ -10,6 +10,9 @@
  *   GEMINI_BASE_URL   走 CF AI Gateway 的 google-ai-studio 原生路径（绕开 Google 对数据中心 IP 的拒绝）
  *   DEEPSEEK_API_KEY  secret，DeepSeek key（sk- 开头）
  *   DEEPSEEK_BASE_URL 默认 https://api.deepseek.com/v1
+ *   GPT_API_KEY       secret，OpenAI 兼容接口 key（官方或中转均可）；别名 OPENAI_API_KEY
+ *   GPT_BASE_URL      OpenAI 兼容接口地址，默认 https://api.openai.com/v1（中转接口改这里）；别名 OPENAI_BASE_URL
+ *   GPT_MODELS        GPT 可用模型清单（逗号分隔），默认 gpt-6-luna,gpt-6-sol,gpt-6-astra；别名 OPENAI_MODELS
  *   兼容回退：LLM_API_KEY / LLM_BASE_URL（旧单模型配置）
  *   ACCESS_CODE       选填，设置后页面需输入访问口令
  */
@@ -26,10 +29,17 @@ const SYSTEM_PROMPT = [
 ].join('\n');
 
 // 各供应商可用模型白名单（服务端校验，防止任意模型名注入）
-const MODELS = {
-  gemini: ['gemini-3.6-flash', 'gemini-3.8-flash'],
-  deepseek: ['deepseek-flash', 'deepseek-v4-pro']
-};
+// GPT（OpenAI 兼容接口）的模型清单由环境变量 GPT_MODELS 配置（逗号分隔），
+// 后台即可增删模型，无需改代码；默认为 2026-09 OpenAI 主力三档
+function modelWhitelist(env) {
+  const gptModels = (env.GPT_MODELS || 'gpt-6-luna,gpt-6-sol,gpt-6-astra')
+    .split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+  return {
+    gemini: ['gemini-3.6-flash', 'gemini-3.8-flash'],
+    deepseek: ['deepseek-flash', 'deepseek-v4-pro'],
+    gpt: gptModels
+  };
+}
 
 function providerConfig(env, provider) {
   if (provider === 'gemini') {
@@ -46,12 +56,22 @@ function providerConfig(env, provider) {
       base: (env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1').replace(/\/$/, '')
     };
   }
+  if (provider === 'gpt') {
+    // OpenAI 兼容接口（官方 api.openai.com 或任意中转/代理均可）
+    return {
+      name: 'gpt',
+      key: env.GPT_API_KEY || env.OPENAI_API_KEY || '',
+      base: (env.GPT_BASE_URL || env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '')
+    };
+  }
   return null;
 }
 
-function inferProvider(model) {
-  if (MODELS.gemini.indexOf(model) >= 0) return 'gemini';
-  if (MODELS.deepseek.indexOf(model) >= 0) return 'deepseek';
+function inferProvider(model, wl) {
+  if (wl.gemini.indexOf(model) >= 0) return 'gemini';
+  if (wl.deepseek.indexOf(model) >= 0) return 'deepseek';
+  if (wl.gpt.indexOf(model) >= 0) return 'gpt';
+  if (model.indexOf('gpt-') === 0 || model.indexOf('o1') === 0 || model.indexOf('o3') === 0) return 'gpt';
   return null;
 }
 
@@ -78,11 +98,12 @@ export async function onRequestPost(context) {
   const history = Array.isArray(body.messages) ? body.messages.slice(-20) : [];
 
   const model = (body.model || '').toString();
+  const wl = modelWhitelist(env);
   let provider = (body.provider || '').toString();
-  if (!provider && model) provider = inferProvider(model);
-  if (!MODELS[provider]) return json({ error: 'BAD_PROVIDER', message: '未知供应商：' + provider }, 400);
-  if (MODELS[provider].indexOf(model) < 0) {
-    return json({ error: 'BAD_MODEL', message: '供应商 ' + provider + ' 不支持模型：' + model + '（可选：' + MODELS[provider].join(' / ') + '）' }, 400);
+  if (!provider && model) provider = inferProvider(model, wl);
+  if (!wl[provider]) return json({ error: 'BAD_PROVIDER', message: '未知供应商：' + provider }, 400);
+  if (wl[provider].indexOf(model) < 0) {
+    return json({ error: 'BAD_MODEL', message: '供应商 ' + provider + ' 不支持模型：' + model + '（可选：' + wl[provider].join(' / ') + '）' }, 400);
   }
 
   const cfg = providerConfig(env, provider);
