@@ -63,7 +63,7 @@ export async function onRequestPost(context) {
     (b.hex || '').toString().slice(0, 80),
     JSON.stringify(b.tosses || []).slice(0, 4000),
     (b.panText || '').toString().slice(0, 8000),
-    JSON.stringify(b.messages || []).slice(0, 20000)
+    JSON.stringify(b.messages || []).slice(0, 100000)
   ).run();
   return json({ id: id });
 }

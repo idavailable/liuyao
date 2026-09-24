@@ -162,6 +162,25 @@
   .ai-block { background: #faf5e9; border: 1px solid #e8dcbf; border-radius: 8px; padding: 14px 16px; font-size: 15px; }
   .ai-block.warn { color: var(--cinnabar); border-color: var(--cinnabar); }
   .loading { color: var(--gold); font-size: 14px; }
+  /* 模型多选芯片 */
+  .model-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 6px; }
+  .mchip {
+    font-family: inherit; font-size: 13px; cursor: pointer; letter-spacing: 1px;
+    padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line);
+    background: #fff; color: var(--ink-light); transition: all .15s;
+  }
+  .mchip:hover { border-color: var(--gold); }
+  .mchip.on { background: var(--cinnabar); border-color: var(--cinnabar-dark); color: #fff; }
+  .mchip .pv { font-size: 11px; opacity: .75; margin-right: 4px; }
+  /* 多模型对比分栏 */
+  .ai-cols { display: flex; gap: 14px; flex-wrap: wrap; align-items: stretch; }
+  .ai-col { flex: 1; min-width: 300px; display: flex; flex-direction: column; gap: 8px; }
+  .ai-col-head {
+    font-size: 14px; font-weight: 600; letter-spacing: 1px;
+    padding: 6px 12px; border-radius: 6px; background: #f3ece0;
+    border-left: 3px solid var(--gold); display: flex; justify-content: space-between; align-items: center;
+  }
+  .ai-col-head .pv-tag { font-size: 11px; font-weight: 400; color: var(--ink-light); }
   .chat-row { display: flex; gap: 10px; margin-top: 10px; }
   .chat-row input {
     flex: 1; font-family: inherit; font-size: 14px; padding: 9px 12px;
@@ -255,15 +274,15 @@
   <!-- AI 断卦 -->
   <section class="card" id="aiCard" hidden>
     <h2>大模型断卦</h2>
-    <div class="muted" style="margin-bottom:10px">排盘已成，可交由大模型通盘断卦（API Key 由服务端保管，页面不可见）。</div>
+    <div class="muted" style="margin-bottom:6px">选择断卦模型（可多选并排对比）：</div>
+    <div class="model-chips" id="modelChips"></div>
     <div class="btn-row" style="justify-content:flex-start">
       <button class="btn primary" id="btnAI">开始断卦</button>
       <button class="btn" id="btnSave">存入卦例库</button>
     </div>
-    <div id="aiReply" style="margin-top:14px"></div>
+    <div id="aiReply" class="ai-cols" style="margin-top:14px"></div>
     <div id="chatBox" hidden>
-      <div class="muted" style="margin-top:16px">进阶探讨（上下文保留，可连续追问）</div>
-      <div id="chatList"></div>
+      <div class="muted" style="margin-top:16px">进阶探讨（各模型上下文独立保留，可连续追问）</div>
       <div class="chat-row">
         <input id="chatInput" placeholder="如：此卦应期在何时？为何取伏神为用？">
         <button class="btn primary" id="btnChat">发送</button>

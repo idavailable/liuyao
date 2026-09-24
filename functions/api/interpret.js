@@ -1,11 +1,17 @@
 /* Cloudflare Pages Function: POST /api/interpret
- * 排盘文本 + 对话历史 → 大模型断卦
- * 环境变量（Pages 项目设置中配置）：
- *   LLM_API_KEY    必填，大模型 API Key（服务端保管，页面不可见）
- *   LLM_BASE_URL   选填，默认 https://api.deepseek.com/v1（OpenAI 兼容接口均可；
- *                  若指向 generativelanguage.googleapis.com 则自动改用 Google 原生 generateContent 协议）
- *   LLM_MODEL      选填，默认 deepseek-chat（古籍理解建议 deepseek-chat / deepseek-reasoner）
- *   ACCESS_CODE    选填，设置后页面需输入访问口令
+ * 排盘文本 + 对话历史 → 大模型断卦（多供应商：Gemini / DeepSeek）
+ *
+ * 请求体：{ panText, messages, provider, model }
+ *   provider: 'gemini' | 'deepseek'（可省略，按 model 名自动推断）
+ *   model:    见下方 MODELS 白名单
+ *
+ * 环境变量（Pages 项目设置 / wrangler.toml [vars] 配置）：
+ *   GEMINI_API_KEY    secret，Google AI Studio key（AIza 开头）
+ *   GEMINI_BASE_URL   走 CF AI Gateway 的 google-ai-studio 原生路径（绕开 Google 对数据中心 IP 的拒绝）
+ *   DEEPSEEK_API_KEY  secret，DeepSeek key（sk- 开头）
+ *   DEEPSEEK_BASE_URL 默认 https://api.deepseek.com/v1
+ *   兼容回退：LLM_API_KEY / LLM_BASE_URL（旧单模型配置）
+ *   ACCESS_CODE       选填，设置后页面需输入访问口令
  */
 
 const SYSTEM_PROMPT = [
@@ -18,6 +24,36 @@ const SYSTEM_PROMPT = [
   '若信息不足，明确指出需补充何事，不得臆造。',
   '用户后续追问时，保持卦理一致，延续断卦思路作答。'
 ].join('\n');
+
+// 各供应商可用模型白名单（服务端校验，防止任意模型名注入）
+const MODELS = {
+  gemini: ['gemini-3.6-flash', 'gemini-3.8-flash'],
+  deepseek: ['deepseek-flash', 'deepseek-v4-pro']
+};
+
+function providerConfig(env, provider) {
+  if (provider === 'gemini') {
+    return {
+      name: 'gemini',
+      key: env.GEMINI_API_KEY || env.LLM_API_KEY || '',
+      base: (env.GEMINI_BASE_URL || env.LLM_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, '')
+    };
+  }
+  if (provider === 'deepseek') {
+    return {
+      name: 'deepseek',
+      key: env.DEEPSEEK_API_KEY || env.LLM_API_KEY || '',
+      base: (env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1').replace(/\/$/, '')
+    };
+  }
+  return null;
+}
+
+function inferProvider(model) {
+  if (MODELS.gemini.indexOf(model) >= 0) return 'gemini';
+  if (MODELS.deepseek.indexOf(model) >= 0) return 'deepseek';
+  return null;
+}
 
 function json(data, status) {
   return new Response(JSON.stringify(data), {
@@ -33,7 +69,6 @@ export async function onRequestPost(context) {
     const code = request.headers.get('X-Access-Code') || '';
     if (code !== env.ACCESS_CODE) return json({ error: 'ACCESS_REQUIRED', message: '需要访问口令' }, 401);
   }
-  if (!env.LLM_API_KEY) return json({ error: 'NO_KEY', message: '服务端未配置 LLM_API_KEY 环境变量' }, 500);
 
   let body;
   try { body = await request.json(); } catch (e) { return json({ error: 'BAD_JSON', message: '请求体解析失败' }, 400); }
@@ -42,13 +77,22 @@ export async function onRequestPost(context) {
   if (!panText) return json({ error: 'NO_PAN', message: '缺少排盘文本' }, 400);
   const history = Array.isArray(body.messages) ? body.messages.slice(-20) : [];
 
-  const base = (env.LLM_BASE_URL || 'https://api.deepseek.com/v1').replace(/\/$/, '');
-  const model = env.LLM_MODEL || 'deepseek-chat';
+  const model = (body.model || '').toString();
+  let provider = (body.provider || '').toString();
+  if (!provider && model) provider = inferProvider(model);
+  if (!MODELS[provider]) return json({ error: 'BAD_PROVIDER', message: '未知供应商：' + provider }, 400);
+  if (MODELS[provider].indexOf(model) < 0) {
+    return json({ error: 'BAD_MODEL', message: '供应商 ' + provider + ' 不支持模型：' + model + '（可选：' + MODELS[provider].join(' / ') + '）' }, 400);
+  }
+
+  const cfg = providerConfig(env, provider);
+  if (!cfg.key) return json({ error: 'NO_KEY', message: '服务端未配置 ' + provider.toUpperCase() + '_API_KEY 环境变量' }, 500);
+
   // Google 原生接口（generativelanguage.googleapis.com 或 AI Gateway 的 google-ai-studio 原生路径）
   // 走 generateContent + x-goog-api-key，并关闭 thinking（思考路径常因 high demand 503）；
   // 其余（含 Gateway 的 /openai 兼容路径、DeepSeek 等）按 OpenAI 兼容接口处理
-  const isGoogle = base.indexOf('generativelanguage.googleapis.com') !== -1 ||
-    (base.indexOf('google-ai-studio') !== -1 && base.slice(-7) !== '/openai');
+  const isGoogle = cfg.base.indexOf('generativelanguage.googleapis.com') !== -1 ||
+    (cfg.base.indexOf('google-ai-studio') !== -1 && cfg.base.slice(-7) !== '/openai');
 
   const messages = [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: panText }];
   history.forEach(function (m) {
@@ -59,8 +103,8 @@ export async function onRequestPost(context) {
 
   let url, headers, payload;
   if (isGoogle) {
-    url = base + '/models/' + encodeURIComponent(model) + ':generateContent';
-    headers = { 'x-goog-api-key': env.LLM_API_KEY, 'Content-Type': 'application/json' };
+    url = cfg.base + '/models/' + encodeURIComponent(model) + ':generateContent';
+    headers = { 'x-goog-api-key': cfg.key, 'Content-Type': 'application/json' };
     const contents = messages.filter(function (m) { return m.role !== 'system'; }).map(function (m) {
       return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] };
     });
@@ -70,8 +114,8 @@ export async function onRequestPost(context) {
       generationConfig: { temperature: 0.3, thinkingConfig: { thinkingBudget: 0 } }
     };
   } else {
-    url = base + '/chat/completions';
-    headers = { 'Authorization': 'Bearer ' + env.LLM_API_KEY, 'Content-Type': 'application/json' };
+    url = cfg.base + '/chat/completions';
+    headers = { 'Authorization': 'Bearer ' + cfg.key, 'Content-Type': 'application/json' };
     payload = { model: model, messages: messages, temperature: 0.3, stream: false };
   }
 
@@ -96,7 +140,7 @@ export async function onRequestPost(context) {
       reply = choice && choice.message ? (choice.message.content || '') : '';
     }
     if (!reply) return json({ error: 'EMPTY', message: '大模型返回为空' }, 502);
-    return json({ reply: reply, model: model });
+    return json({ reply: reply, provider: provider, model: model });
   } catch (e) {
     return json({ error: 'NET_ERROR', message: '无法连接大模型服务：' + e.message }, 502);
   }

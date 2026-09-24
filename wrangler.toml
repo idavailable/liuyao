@@ -11,8 +11,10 @@ database_name = "liuyao-db"
 database_id = "42279a23-7032-42bb-b675-bb7a2015fcc0"
 
 [vars]
-# LLM_API_KEY 属于密钥，请用 `npx wrangler pages secret put LLM_API_KEY` 或在 Pages 后台加密设置，不要写进此文件
-# 走 CF AI Gateway 代理 Google（绕开 Google 对数据中心 IP 的拒绝）；换其他 OpenAI 兼容接口直接改这两行
-LLM_BASE_URL = "https://gateway.ai.cloudflare.com/v1/88497ab707363a498e48af20a3d52aa9/liuyao-gw/google-ai-studio/v1beta"
-LLM_MODEL = "gemini-3.6-flash"
+# 密钥用 secret（wrangler pages secret put 或 Pages 后台加密设置），不要写进此文件：
+#   GEMINI_API_KEY    Google AI Studio key（AIza 开头）
+#   DEEPSEEK_API_KEY  DeepSeek key（sk- 开头）
+# Gemini 走 CF AI Gateway 原生路径（绕开 Google 对数据中心 IP 的拒绝），并关闭 thinking
+GEMINI_BASE_URL = "https://gateway.ai.cloudflare.com/v1/88497ab707363a498e48af20a3d52aa9/liuyao-gw/google-ai-studio/v1beta"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 # ACCESS_CODE = ""   # 选填：访问口令；设置后页面首次调用会提示输入

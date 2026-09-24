@@ -219,14 +219,46 @@
     ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
   }
 
-  // ---------- AI 断卦 / 进阶探讨 / 卦例库 ----------
-  let chatHistory = [];
+  // ---------- AI 断卦 / 进阶探讨 / 卦例库（多模型对比） ----------
+  const MODELS = [
+    { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', pv: 'Google' },
+    { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', pv: 'Google' },
+    { id: 'deepseek-flash', label: 'DeepSeek Flash', pv: 'DeepSeek' },
+    { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', pv: 'DeepSeek' }
+  ];
+  const DEFAULT_MODELS = ['gemini-3.6-flash', 'deepseek-flash'];
+
+  let selModels = loadSelModels();
+  let aiStates = {};   // { modelId: { history: [] } }
   let castId = null;
 
+  function loadSelModels() {
+    let saved = [];
+    try { saved = JSON.parse(localStorage.getItem('ly_models') || '[]'); } catch (e) {}
+    const valid = saved.filter(function (m) { return MODELS.some(function (x) { return x.id === m; }); });
+    return valid.length ? valid : DEFAULT_MODELS.slice();
+  }
+
+  function renderModelChips() {
+    $('#modelChips').innerHTML = MODELS.map(function (m) {
+      return '<button class="mchip' + (selModels.indexOf(m.id) >= 0 ? ' on' : '') + '" data-m="' + m.id + '">' +
+        '<span class="pv">' + m.pv + '</span>' + m.label + '</button>';
+    }).join('');
+    Array.prototype.forEach.call(document.querySelectorAll('.mchip'), function (btn) {
+      btn.onclick = function () {
+        const id = btn.dataset.m;
+        const i = selModels.indexOf(id);
+        if (i >= 0) { if (selModels.length > 1) selModels.splice(i, 1); }
+        else selModels.push(id);
+        localStorage.setItem('ly_models', JSON.stringify(selModels));
+        renderModelChips();
+      };
+    });
+  }
+
   function resetAIState() {
-    chatHistory = []; castId = null;
-    const reply = $('#aiReply'); if (reply) reply.innerHTML = '';
-    const list = $('#chatList'); if (list) list.innerHTML = '';
+    aiStates = {}; castId = null;
+    $('#aiReply').innerHTML = '';
     const box = $('#chatBox'); if (box) box.hidden = true;
     const btn = $('#btnSave'); if (btn) btn.textContent = '存入卦例库';
     const btnAI = $('#btnAI'); if (btnAI) { btnAI.disabled = false; btnAI.textContent = '开始断卦'; }
@@ -263,61 +295,73 @@
       .replace(/\n/g, '<br>');
   }
 
-  async function callInterpret() {
+  async function callInterpret(model, history) {
     const res = await apiFetch('/api/interpret', {
       method: 'POST',
-      body: JSON.stringify({ panText: buildPanText(true), messages: chatHistory })
+      body: JSON.stringify({ panText: buildPanText(true), messages: history, model: model })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error || ('HTTP ' + res.status));
     return data.reply;
   }
 
+  function colBody(id) { return document.getElementById('col-' + id.replace(/[^a-zA-Z0-9]/g, '')); }
+
+  function renderCols() {
+    $('#aiReply').innerHTML = selModels.map(function (m, i) {
+      const cfg = MODELS.filter(function (x) { return x.id === m; })[0] || {};
+      return '<div class="ai-col">' +
+        '<div class="ai-col-head">' + esc(cfg.label || m) + '<span class="pv-tag">' + esc(cfg.pv || '') + '</span></div>' +
+        '<div class="ai-col-body" id="col-' + m.replace(/[^a-zA-Z0-9]/g, '') + '"></div>' +
+        '</div>';
+    }).join('');
+  }
+
   $('#btnAI').onclick = async function () {
     if (!pan) return;
     const btn = $('#btnAI');
     btn.disabled = true; btn.textContent = '卦师推敲中…';
-    $('#aiReply').innerHTML = '<div class="loading">正在将排盘呈予大模型通盘断卦…</div>';
-    try {
-      const reply = await callInterpret();
-      chatHistory.push({ role: 'assistant', content: reply });
-      $('#aiReply').innerHTML = '<div class="ai-block">' + mdLite(reply) + '</div>';
-      $('#chatBox').hidden = false;
-      renderChatList();
-      autoSaveCast();
-    } catch (e) {
-      $('#aiReply').innerHTML = '<div class="ai-block warn">断卦失败：' + esc(e.message) +
-        '（本地直接打开 index.html 时 /api 接口不存在，需部署到 Cloudflare Pages 后使用）</div>';
-    } finally {
-      btn.disabled = false; btn.textContent = '重新断卦';
-    }
+    aiStates = {};
+    renderCols();
+    selModels.forEach(function (m) {
+      colBody(m).innerHTML = '<div class="loading">推卦中…</div>';
+    });
+    await Promise.all(selModels.map(async function (m) {
+      try {
+        const reply = await callInterpret(m, []);
+        aiStates[m] = { history: [{ role: 'assistant', content: reply }] };
+        colBody(m).innerHTML = '<div class="ai-block">' + mdLite(reply) + '</div>';
+      } catch (e) {
+        colBody(m).innerHTML = '<div class="ai-block warn">断卦失败：' + esc(e.message) + '</div>';
+      }
+    }));
+    $('#chatBox').hidden = !Object.keys(aiStates).length;
+    btn.disabled = false; btn.textContent = '重新断卦';
+    autoSaveCast();
   };
-
-  function renderChatList() {
-    $('#chatList').innerHTML = chatHistory.slice(1).map(function (m) {
-      return '<div class="msg ' + (m.role === 'user' ? 'user' : 'ai') + '"><b>' +
-        (m.role === 'user' ? '问' : '断') + '：</b>' + mdLite(m.content) + '</div>';
-    }).join('');
-  }
 
   async function sendChat() {
     const input = $('#chatInput');
     const q = input.value.trim();
-    if (!q) return;
-    chatHistory.push({ role: 'user', content: q });
+    if (!q || !Object.keys(aiStates).length) return;
     input.value = '';
-    renderChatList();
-    $('#chatList').insertAdjacentHTML('beforeend', '<div class="msg ai" id="chatLoading"><span class="loading">卦师推敲中…</span></div>');
-    try {
-      const reply = await callInterpret();
-      const el = document.getElementById('chatLoading'); if (el) el.remove();
-      chatHistory.push({ role: 'assistant', content: reply });
-      renderChatList();
-      autoSaveCast();
-    } catch (e) {
-      const el = document.getElementById('chatLoading'); if (el) el.remove();
-      $('#chatList').insertAdjacentHTML('beforeend', '<div class="msg ai" style="color:var(--cinnabar)">出错了：' + esc(e.message) + '</div>');
-    }
+    const active = Object.keys(aiStates);
+    active.forEach(function (m) {
+      aiStates[m].history.push({ role: 'user', content: q });
+      colBody(m).insertAdjacentHTML('beforeend',
+        '<div class="msg user"><b>问：</b>' + mdLite(q) + '</div><div class="msg ai" id="chatload-' + m.replace(/[^a-zA-Z0-9]/g, '') + '"><span class="loading">推敲中…</span></div>');
+    });
+    await Promise.all(active.map(async function (m) {
+      const loadEl = document.getElementById('chatload-' + m.replace(/[^a-zA-Z0-9]/g, ''));
+      try {
+        const reply = await callInterpret(m, aiStates[m].history.slice(0, -1));
+        aiStates[m].history.push({ role: 'assistant', content: reply });
+        if (loadEl) loadEl.innerHTML = mdLite(reply);
+      } catch (e) {
+        if (loadEl) loadEl.innerHTML = '<span style="color:var(--cinnabar)">出错：' + esc(e.message) + '</span>';
+      }
+    }));
+    autoSaveCast();
   }
   $('#btnChat').onclick = sendChat;
   $('#chatInput').onkeydown = function (e) { if (e.key === 'Enter') sendChat(); };
@@ -332,7 +376,7 @@
       hex: pan.benName + (pan.hasBian ? ' 之 ' + pan.bianName : '（静卦）'),
       tosses: records,
       panText: buildPanText(true),
-      messages: chatHistory
+      messages: aiStates   // { modelId: [{role, content}] }
     };
   }
 
@@ -382,18 +426,28 @@
     const data = await res.json();
     if (!res.ok) { alert('读取失败：' + (data.message || '')); return; }
     const r = data.record;
-    let msgs = []; try { msgs = JSON.parse(r.messages || '[]'); } catch (e) {}
+    let msgs = {}; try { msgs = JSON.parse(r.messages || '{}'); } catch (e) {}
+    // 兼容旧格式（单模型数组）
+    if (Array.isArray(msgs)) msgs = msgs.length ? { '（旧版记录）': msgs } : {};
+    let colHTML = Object.keys(msgs).map(function (m) {
+      const cfg = MODELS.filter(function (x) { return x.id === m; })[0] || { label: m, pv: '' };
+      return '<div class="ai-col">' +
+        '<div class="ai-col-head">' + esc(cfg.label || m) + '<span class="pv-tag">' + esc(cfg.pv || '') + '</span></div>' +
+        msgs[m].map(function (msg) {
+          return '<div class="msg ' + (msg.role === 'user' ? 'user' : 'ai') + '"><b>' +
+            (msg.role === 'user' ? '问' : '断') + '：</b>' + mdLite(msg.content) + '</div>';
+        }).join('') + '</div>';
+    }).join('');
+    if (!colHTML) colHTML = '<div class="muted">该卦例无对话记录。</div>';
     $('#libDetail').innerHTML = '<div class="ai-block"><b>' + esc(r.hex) + '</b>　<span class="muted">' +
       esc(r.datetime || '') + '　' + esc(r.pillars || '') + '</span>' +
       '<pre class="pan-text">' + esc(r.pan_text || '') + '</pre>' +
-      msgs.map(function (m) {
-        return '<div class="msg ' + (m.role === 'user' ? 'user' : 'ai') + '"><b>' +
-          (m.role === 'user' ? '问' : '断') + '：</b>' + mdLite(m.content) + '</div>';
-      }).join('') + '</div>';
+      '<div class="ai-cols">' + colHTML + '</div></div>';
     $('#libDetail').scrollIntoView({ behavior: 'smooth' });
   }
 
   // ---------- init ----------
+  renderModelChips();
   renderTime();
   renderCoins();
   renderTossHint();
