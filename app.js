@@ -221,10 +221,10 @@
 
   // ---------- AI 断卦 / 进阶探讨 / 卦例库（多模型对比） ----------
   const MODELS = [
-    { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', pv: 'Google' },
-    { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', pv: 'Google' },
-    { id: 'deepseek-flash', label: 'DeepSeek Flash', pv: 'DeepSeek' },
-    { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', pv: 'DeepSeek' }
+    { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', pv: 'Google', tip: '快' },
+    { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', pv: 'Google', tip: '高峰期易过载' },
+    { id: 'deepseek-flash', label: 'DeepSeek Flash', pv: 'DeepSeek', tip: '快' },
+    { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', pv: 'DeepSeek', tip: '深推理 · 慢' }
   ];
   const DEFAULT_MODELS = ['gemini-3.6-flash', 'deepseek-flash'];
 
@@ -241,8 +241,8 @@
 
   function renderModelChips() {
     $('#modelChips').innerHTML = MODELS.map(function (m) {
-      return '<button class="mchip' + (selModels.indexOf(m.id) >= 0 ? ' on' : '') + '" data-m="' + m.id + '">' +
-        '<span class="pv">' + m.pv + '</span>' + m.label + '</button>';
+      return '<button class="mchip' + (selModels.indexOf(m.id) >= 0 ? ' on' : '') + '" data-m="' + m.id + '" title="' + esc(m.tip || '') + '">' +
+        '<span class="pv">' + m.pv + '</span>' + m.label + (m.tip ? '<span class="pv"> · ' + m.tip + '</span>' : '') + '</button>';
     }).join('');
     Array.prototype.forEach.call(document.querySelectorAll('.mchip'), function (btn) {
       btn.onclick = function () {
