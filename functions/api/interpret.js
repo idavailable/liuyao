@@ -2,7 +2,8 @@
  * 排盘文本 + 对话历史 → 大模型断卦
  * 环境变量（Pages 项目设置中配置）：
  *   LLM_API_KEY    必填，大模型 API Key（服务端保管，页面不可见）
- *   LLM_BASE_URL   选填，默认 https://api.deepseek.com/v1（OpenAI 兼容接口均可）
+ *   LLM_BASE_URL   选填，默认 https://api.deepseek.com/v1（OpenAI 兼容接口均可；
+ *                  若指向 generativelanguage.googleapis.com 则自动改用 Google 原生 generateContent 协议）
  *   LLM_MODEL      选填，默认 deepseek-chat（古籍理解建议 deepseek-chat / deepseek-reasoner）
  *   ACCESS_CODE    选填，设置后页面需输入访问口令
  */
@@ -43,6 +44,9 @@ export async function onRequestPost(context) {
 
   const base = (env.LLM_BASE_URL || 'https://api.deepseek.com/v1').replace(/\/$/, '');
   const model = env.LLM_MODEL || 'deepseek-chat';
+  // Google 原生接口（generativelanguage.googleapis.com）走 generateContent + x-goog-api-key；
+  // 其余按 OpenAI 兼容接口处理（DeepSeek 等）
+  const isGoogle = base.indexOf('generativelanguage.googleapis.com') !== -1;
 
   const messages = [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: panText }];
   history.forEach(function (m) {
@@ -51,19 +55,44 @@ export async function onRequestPost(context) {
     }
   });
 
+  let url, headers, payload;
+  if (isGoogle) {
+    url = base + '/models/' + encodeURIComponent(model) + ':generateContent';
+    headers = { 'x-goog-api-key': env.LLM_API_KEY, 'Content-Type': 'application/json' };
+    const contents = messages.filter(function (m) { return m.role !== 'system'; }).map(function (m) {
+      return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] };
+    });
+    payload = {
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents: contents,
+      generationConfig: { temperature: 0.3 }
+    };
+  } else {
+    url = base + '/chat/completions';
+    headers = { 'Authorization': 'Bearer ' + env.LLM_API_KEY, 'Content-Type': 'application/json' };
+    payload = { model: model, messages: messages, temperature: 0.3, stream: false };
+  }
+
   try {
-    const resp = await fetch(base + '/chat/completions', {
+    const resp = await fetch(url, {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + env.LLM_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: model, messages: messages, temperature: 0.3, stream: false })
+      headers: headers,
+      body: JSON.stringify(payload)
     });
     if (!resp.ok) {
       const t = await resp.text();
       return json({ error: 'LLM_ERROR', message: '大模型接口返回 ' + resp.status, detail: t.slice(0, 500) }, 502);
     }
     const data = await resp.json();
-    const choice = data.choices && data.choices[0];
-    const reply = choice && choice.message ? (choice.message.content || '') : '';
+    let reply = '';
+    if (isGoogle) {
+      const cand = data.candidates && data.candidates[0];
+      const parts = cand && cand.content && cand.content.parts;
+      if (parts) reply = parts.map(function (p) { return p.text || ''; }).join('');
+    } else {
+      const choice = data.choices && data.choices[0];
+      reply = choice && choice.message ? (choice.message.content || '') : '';
+    }
     if (!reply) return json({ error: 'EMPTY', message: '大模型返回为空' }, 502);
     return json({ reply: reply, model: model });
   } catch (e) {
