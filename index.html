@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>六爻排盘 · 莲斋</title>
+<style>
+  :root {
+    --paper: #f7f3ea;
+    --card: #fffdf8;
+    --ink: #33302a;
+    --ink-light: #7a7365;
+    --line: #ddd4c2;
+    --cinnabar: #a83f39;
+    --cinnabar-dark: #8c302b;
+    --gold: #9a7b3f;
+    --ok: #3d7a4f;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Noto Serif SC", "Source Han Serif SC", "KaiTi", "STKaiti", serif;
+    background: var(--paper);
+    color: var(--ink);
+    line-height: 1.7;
+    padding-bottom: 60px;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 0 16px; }
+  header {
+    text-align: center;
+    padding: 36px 0 20px;
+  }
+  header h1 {
+    font-size: 34px;
+    letter-spacing: 14px;
+    text-indent: 14px;
+    font-weight: 600;
+  }
+  header .sub {
+    color: var(--ink-light);
+    font-size: 14px;
+    letter-spacing: 4px;
+    margin-top: 6px;
+  }
+  header .divider {
+    width: 220px; height: 1px; margin: 16px auto 0;
+    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 22px 26px;
+    margin-top: 22px;
+    box-shadow: 0 2px 10px rgba(60,50,30,.05);
+  }
+  .card h2 {
+    font-size: 18px;
+    letter-spacing: 6px;
+    border-left: 4px solid var(--cinnabar);
+    padding-left: 12px;
+    margin-bottom: 14px;
+    font-weight: 600;
+  }
+  .muted { color: var(--ink-light); font-size: 13px; }
+
+  /* 时间卡 */
+  #timeInfo { font-size: 15px; }
+  #timeInfo .gz { font-size: 17px; letter-spacing: 2px; margin: 4px 0; }
+  #timeInfo .gz b { color: var(--cinnabar); }
+  .date-row { margin-top: 10px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  input[type="datetime-local"] {
+    font-family: inherit; font-size: 14px;
+    padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
+    background: #fff; color: var(--ink);
+  }
+
+  /* 起卦区 */
+  .cast-grid { display: flex; gap: 28px; flex-wrap: wrap; }
+  .cast-left { flex: 1; min-width: 300px; }
+  .coin-row { display: flex; gap: 18px; justify-content: center; margin: 14px 0 8px; }
+  .coin {
+    width: 74px; height: 74px; border-radius: 50%;
+    font-family: inherit; font-size: 26px; cursor: pointer;
+    border: 3px solid var(--gold);
+    background: radial-gradient(circle at 35% 30%, #fdf8ec, #eedcb6);
+    color: var(--ink); transition: transform .12s;
+  }
+  .coin:active { transform: scale(.94); }
+  .coin.is-zhi { background: radial-gradient(circle at 35% 30%, #f5efe2, #d9cdb2); color: var(--ink-light); }
+  .toss-hint { text-align: center; font-size: 15px; margin: 8px 0 16px; }
+  .toss-hint b { color: var(--cinnabar); }
+  .btn {
+    font-family: inherit; font-size: 15px; cursor: pointer;
+    padding: 9px 22px; border-radius: 7px; border: 1px solid var(--line);
+    background: #fff; color: var(--ink); letter-spacing: 2px;
+    transition: all .15s;
+  }
+  .btn:hover { border-color: var(--gold); }
+  .btn.primary { background: var(--cinnabar); border-color: var(--cinnabar-dark); color: #fff; }
+  .btn.primary:hover { background: var(--cinnabar-dark); }
+  .btn.ghost { background: transparent; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 12px; }
+
+  /* 爻位堆叠 */
+  .yao-stack { width: 200px; margin: 0 auto; }
+  .yao-slot {
+    display: flex; align-items: center; justify-content: center;
+    height: 40px; margin: 5px 0; font-size: 20px;
+    border: 1px dashed var(--line); border-radius: 6px;
+    color: var(--ink-light); letter-spacing: 4px;
+  }
+  .yao-slot.current { border: 1.5px solid var(--cinnabar); background: #fbf1ef; }
+  .yao-slot .nm { font-size: 12px; margin-right: 10px; color: var(--ink-light); }
+  .yao-slot.moving-y { color: var(--cinnabar); font-weight: 600; }
+
+  /* 排盘表 */
+  .hex-title { text-align: center; font-size: 20px; letter-spacing: 3px; margin-bottom: 6px; }
+  .hex-title b { color: var(--cinnabar); }
+  .meta-line { text-align: center; color: var(--ink-light); font-size: 13px; margin-bottom: 14px; }
+  table.pan { width: 100%; border-collapse: collapse; font-size: 15px; }
+  table.pan th {
+    font-weight: 600; color: var(--ink-light); font-size: 13px;
+    border-bottom: 1.5px solid var(--gold); padding: 6px 4px; letter-spacing: 3px;
+  }
+  table.pan td { border-bottom: 1px solid var(--line); padding: 8px 4px; text-align: center; }
+  .yao-sym { font-family: monospace; font-size: 16px; letter-spacing: 0; white-space: nowrap; }
+  .yao-sym.moving { color: var(--cinnabar); font-weight: 700; }
+  .badge-shi, .badge-ying {
+    display: inline-block; width: 22px; height: 22px; line-height: 22px;
+    border-radius: 50%; font-size: 12px; color: #fff;
+  }
+  .badge-shi { background: var(--cinnabar); }
+  .badge-ying { background: var(--gold); }
+  .fu-cell { color: var(--ink-light); font-size: 13px; }
+  .kong { color: var(--cinnabar); }
+  .bian-cell { color: #4a6741; }
+
+  /* 断卦 */
+  .use-select {
+    font-family: inherit; font-size: 15px; padding: 8px 12px;
+    border: 1px solid var(--line); border-radius: 6px; background: #fff;
+    margin-bottom: 12px;
+  }
+  ul.concl { list-style: none; }
+  ul.concl li {
+    padding: 7px 4px 7px 18px; position: relative; font-size: 15px;
+    border-bottom: 1px dashed #eee7d8;
+  }
+  ul.concl li::before { content: "·"; position: absolute; left: 4px; color: var(--gold); font-weight: 700; }
+  ul.concl li.warn { color: var(--cinnabar); }
+  .verdict {
+    margin-top: 14px; padding: 12px 16px; background: #faf5e9;
+    border: 1px solid #e8dcbf; border-radius: 8px; font-size: 15px;
+  }
+  .verdict b { color: var(--cinnabar); }
+  .disclaimer {
+    margin-top: 26px; text-align: center; color: var(--ink-light);
+    font-size: 12px; letter-spacing: 1px;
+  }
+  /* AI 断卦 / 进阶探讨 */
+  .ai-block { background: #faf5e9; border: 1px solid #e8dcbf; border-radius: 8px; padding: 14px 16px; font-size: 15px; }
+  .ai-block.warn { color: var(--cinnabar); border-color: var(--cinnabar); }
+  .loading { color: var(--gold); font-size: 14px; }
+  .chat-row { display: flex; gap: 10px; margin-top: 10px; }
+  .chat-row input {
+    flex: 1; font-family: inherit; font-size: 14px; padding: 9px 12px;
+    border: 1px solid var(--line); border-radius: 6px; background: #fff;
+  }
+  .msg { padding: 8px 12px; border-radius: 8px; margin: 8px 0; font-size: 14px; }
+  .msg.user { background: #f3ece0; }
+  .msg.ai { background: #eef3ec; }
+  /* 卦例库 */
+  .lib-item {
+    padding: 8px 10px; border-bottom: 1px dashed #eee7d8; cursor: pointer;
+    display: flex; justify-content: space-between; gap: 8px; font-size: 14px;
+  }
+  .lib-item:hover { background: #faf5e9; }
+  .pan-text {
+    white-space: pre-wrap; font-family: "Courier New", monospace; font-size: 13px;
+    background: #fff; border: 1px solid var(--line); border-radius: 6px;
+    padding: 10px; margin: 10px 0; line-height: 1.6;
+  }
+  [hidden] { display: none !important; }
+  @media (max-width: 640px) {
+    .cast-grid { flex-direction: column; }
+    table.pan { font-size: 13px; }
+    .yao-sym { font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>六爻排盘</h1>
+    <div class="sub">铜钱摇卦 · 纳甲装卦 · 以诚叩之</div>
+    <div class="divider"></div>
+  </header>
+
+  <!-- 时间 -->
+  <section class="card">
+    <h2>占时</h2>
+    <div id="timeInfo"></div>
+    <div class="date-row">
+      <span class="muted">占问时刻（可改）： </span>
+      <input type="datetime-local" id="dtInput">
+    </div>
+  </section>
+
+  <!-- 起卦 -->
+  <section class="card" id="castCard">
+    <h2>起卦</h2>
+    <div class="cast-grid">
+      <div class="cast-left">
+        <div class="muted" style="text-align:center" id="stepHint">静心默念所测之事，自下而上摇六次。点铜钱可翻转「背 / 字」。</div>
+        <div class="coin-row" id="coinRow"></div>
+        <div class="toss-hint" id="tossHint"></div>
+        <div class="btn-row">
+          <button class="btn" id="btnRandom">掷铜钱</button>
+          <button class="btn primary" id="btnConfirm">定此爻</button>
+          <button class="btn ghost" id="btnUndo">撤销上一爻</button>
+        </div>
+      </div>
+      <div class="yao-stack" id="yaoStack"></div>
+    </div>
+  </section>
+
+  <!-- 排盘 -->
+  <section class="card" id="panCard" hidden>
+    <h2>卦象</h2>
+    <div id="panBody"></div>
+    <div class="btn-row">
+      <button class="btn" id="btnCopy">复制排盘文本</button>
+      <button class="btn ghost" id="btnReset">重新起卦</button>
+    </div>
+  </section>
+
+  <!-- 断卦 -->
+  <section class="card" id="analysisCard" hidden>
+    <h2>断卦提示</h2>
+    <select class="use-select" id="useSelect">
+      <option value="">—— 选择所测之事 ——</option>
+      <option value="妻财">求财 · 买卖 · 财物 · 妻（男测婚姻）</option>
+      <option value="官鬼">功名 · 官司 · 疾病 · 夫（女测婚姻）</option>
+      <option value="父母">考试 · 文书 · 合同 · 房屋 · 长辈</option>
+      <option value="子孙">子女 · 晚辈 · 医药 · 解忧</option>
+      <option value="兄弟">朋友 · 同事 · 竞争 · 破耗</option>
+      <option value="shi">自身 · 身体 · 运势</option>
+    </select>
+    <ul class="concl" id="conclList"></ul>
+    <div class="verdict" id="verdictBox" hidden></div>
+    <p class="muted" style="margin-top:12px">以上为旺衰硬规则的粗判。动爻组合、用神取舍、应期推断皆需通盘细审——可将排盘文本复制予 AI 或明师参断。</p>
+  </section>
+
+  <!-- AI 断卦 -->
+  <section class="card" id="aiCard" hidden>
+    <h2>大模型断卦</h2>
+    <div class="muted" style="margin-bottom:10px">排盘已成，可交由大模型通盘断卦（API Key 由服务端保管，页面不可见）。</div>
+    <div class="btn-row" style="justify-content:flex-start">
+      <button class="btn primary" id="btnAI">开始断卦</button>
+      <button class="btn" id="btnSave">存入卦例库</button>
+    </div>
+    <div id="aiReply" style="margin-top:14px"></div>
+    <div id="chatBox" hidden>
+      <div class="muted" style="margin-top:16px">进阶探讨（上下文保留，可连续追问）</div>
+      <div id="chatList"></div>
+      <div class="chat-row">
+        <input id="chatInput" placeholder="如：此卦应期在何时？为何取伏神为用？">
+        <button class="btn primary" id="btnChat">发送</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 卦例库 -->
+  <section class="card" id="libCard">
+    <h2>卦例库</h2>
+    <div class="btn-row" style="justify-content:flex-start">
+      <button class="btn" id="btnLib">载入卦例库</button>
+    </div>
+    <div id="libList" style="margin-top:12px"></div>
+    <div id="libDetail" style="margin-top:12px"></div>
+  </section>
+
+  <p class="disclaimer">排盘依京房八宫纳甲法 · 节气按通用公式推算（临界日期或有一日之差）· 本工具仅供术数研究与娱乐参考</p>
+</div>
+
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

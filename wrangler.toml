@@ -1,0 +1,17 @@
+name = "liuyao"
+compatibility_date = "2026-09-24"
+pages_build_output_dir = "."
+
+# 本地开发：npx wrangler pages dev .
+# 线上部署后，在 Pages 项目 → Settings → Functions 中做同样的绑定
+
+[[d1_databases]]
+binding = "LIUYAO_DB"
+database_name = "liuyao-db"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[vars]
+# LLM_API_KEY 属于密钥，请用 `npx wrangler pages secret put LLM_API_KEY` 或在 Pages 后台加密设置，不要写进此文件
+LLM_BASE_URL = "https://api.deepseek.com/v1"
+LLM_MODEL = "deepseek-chat"
+# ACCESS_CODE = ""   # 选填：访问口令；设置后页面首次调用会提示输入
