@@ -168,7 +168,43 @@ export async function onRequestPost(context) {
   } else {
     url = cfg.base + '/chat/completions';
     headers = { 'Authorization': 'Bearer ' + cfg.key, 'Content-Type': 'application/json' };
-    payload = { model: model, messages: messages, temperature: 0.3, stream: false };
+    // 统一走流式（服务端拼接完整文本后返回），避免中转站网关的 60s 整响应硬超时
+    payload = { model: model, messages: messages, stream: true };
+    if (/^(gpt-5|o[134])/.test(model)) {
+      // gpt-5 / o 系思考模型：不支持 temperature；推理强度可用环境变量 GPT_EFFORT 调（minimal/low/medium/high），默认 low 防超时
+      const effort = (env.GPT_EFFORT || 'low').trim();
+      if (effort && effort !== 'none') payload.reasoning_effort = effort;
+    } else {
+      payload.temperature = 0.3;
+    }
+  }
+
+  // 流式 SSE 读取：拼接 delta.content（跳过 reasoning 思考链片段），突破网关整响应超时
+  async function readSSE(resp) {
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '', full = '';
+    while (true) {
+      const r = await reader.read();
+      if (r.done) break;
+      buf += dec.decode(r.value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, idx).trim();
+        buf = buf.slice(idx + 1);
+        if (line.indexOf('data:') !== 0) continue;
+        const data = line.slice(5).trim();
+        if (!data || data === '[DONE]') continue;
+        try {
+          const j = JSON.parse(data);
+          const c = j.choices && j.choices[0];
+          const d = c && c.delta;
+          if (d && d.content) full += d.content;
+          else if (c && c.message && c.message.content) full += c.message.content; // 部分中转站流里回完整段
+        } catch (e) { /* 忽略无法解析的分片 */ }
+      }
+    }
+    return full;
   }
 
   try {
@@ -181,15 +217,21 @@ export async function onRequestPost(context) {
       const t = await resp.text();
       return json({ error: 'LLM_ERROR', message: '大模型接口返回 ' + resp.status, detail: t.slice(0, 500) }, 502);
     }
-    const data = await resp.json();
+    const ct = (resp.headers.get('content-type') || '').toLowerCase();
     let reply = '';
-    if (isGoogle) {
-      const cand = data.candidates && data.candidates[0];
-      const parts = cand && cand.content && cand.content.parts;
-      if (parts) reply = parts.map(function (p) { return p.text || ''; }).join('');
+    if (!isGoogle && payload.stream && ct.indexOf('text/event-stream') !== -1) {
+      // 流式 SSE：拼接完整文本（个别中转站忽略 stream 参数回 JSON 时走下方兜底）
+      reply = await readSSE(resp);
     } else {
-      const choice = data.choices && data.choices[0];
-      reply = choice && choice.message ? (choice.message.content || '') : '';
+      const data = await resp.json();
+      if (isGoogle) {
+        const cand = data.candidates && data.candidates[0];
+        const parts = cand && cand.content && cand.content.parts;
+        if (parts) reply = parts.map(function (p) { return p.text || ''; }).join('');
+      } else {
+        const choice = data.choices && data.choices[0];
+        reply = choice && choice.message ? (choice.message.content || '') : '';
+      }
     }
     if (!reply) return json({ error: 'EMPTY', message: '大模型返回为空' }, 502);
     return json({ reply: reply, provider: provider, model: model });
