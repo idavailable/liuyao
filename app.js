@@ -341,14 +341,69 @@
       .replace(/\n/g, '<br>');
   }
 
-  async function callInterpret(model, history) {
-    const res = await apiFetch('/api/interpret', {
-      method: 'POST',
-      body: JSON.stringify({ panText: buildPanText(true), messages: history, model: model })
+  // 与服务端 interpret.js 的 SYSTEM_PROMPT 保持一致（用于失败时手动断卦的提示词）
+  const SYSTEM_PROMPT = [
+    '你是一位精通京房纳甲六爻的卦师，治学严谨，断卦有据。',
+    '收到排盘后按以下次序通盘论断：',
+    '一、列卦象要点：卦名卦宫、世应、用神（按所测之事取之，两现说明取舍）、动爻及其化出、月建日辰生克、旬空月破、冲合。',
+    '二、断吉凶：以旺衰生克为纲，引经据典（《增删卜易》《卜筮正宗》等），术语用规范六爻术语，不得用现代心理学术语。',
+    '三、断应期：据旬空、冲合、生扶之理推断应验之时。',
+    '四、白话总结：用一段简明中文给出结论与建议。',
+    '若信息不足，明确指出需补充何事，不得臆造。',
+    '用户后续追问时，保持卦理一致，延续断卦思路作答。'
+  ].join('\n');
+
+  // 拼装发给大模型的完整请求文本（失败/无输出时可复制到任意对话窗口手动断卦）
+  function buildManualPrompt(history) {
+    let txt = SYSTEM_PROMPT + '\n\n' + buildPanText(true);
+    (history || []).forEach(function (m) {
+      if (m && m.content) {
+        txt += '\n\n' + (m.role === 'user' ? '【追问】' : '【前答】') + '\n' + m.content;
+      }
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || data.error || ('HTTP ' + res.status));
+    return txt;
+  }
+
+  async function callInterpret(model, history) {
+    let res, raw;
+    try {
+      res = await apiFetch('/api/interpret', {
+        method: 'POST',
+        body: JSON.stringify({ panText: buildPanText(true), messages: history, model: model })
+      });
+      raw = await res.text();
+    } catch (e) {
+      throw { kind: 'net', message: '网络请求失败：' + e.message };
+    }
+    let data;
+    try { data = JSON.parse(raw); }
+    catch (e) {
+      // 返回了 HTML（部署传播中/边缘缓存）——给可读提示，不抛 JSON 天书
+      throw { kind: 'html', message: '接口暂未就绪（新部署传播中，稍等片刻重试即可）' };
+    }
+    if (!res.ok) throw { kind: 'api', message: data.message || data.error || ('HTTP ' + res.status), detail: data.detail || '' };
+    if (!data.reply) throw { kind: 'empty', message: '大模型返回为空' };
     return data.reply;
+  }
+
+  // 失败/无输出时的降级展示：友好提示 + 完整请求内容（可一键复制去任意对话窗口）
+  function renderFailBox(el, model, history, err) {
+    const cfg = MODELS.filter(function (x) { return x.id === model; })[0] || {};
+    const prompt = buildManualPrompt(history);
+    el.innerHTML =
+      '<div class="ai-block warn">⚠ ' + esc(err.kind === 'html' ? err.message : '本次未获得断语：' + err.message) +
+      (err.detail ? '<div class="muted" style="margin-top:4px;font-size:12px;word-break:break-all">' + esc(String(err.detail).slice(0, 300)) + '</div>' : '') +
+      '<div style="margin-top:8px">可将下方请求内容复制到任意大模型对话窗口手动断卦：</div>' +
+      '<div class="btn-row" style="margin-top:8px"><button class="btn" data-copy-prompt>复制请求内容</button></div>' +
+      '<pre class="pan-text" style="max-height:260px;overflow:auto;margin-top:8px">' + esc(prompt) + '</pre>' +
+      '</div>';
+    const btn = el.querySelector('[data-copy-prompt]');
+    if (btn) btn.onclick = function () {
+      const done = function () { btn.textContent = '已复制 ✓'; setTimeout(function () { btn.textContent = '复制请求内容'; }, 1500); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(prompt).then(done).catch(function () { fallbackCopy(prompt); done(); });
+      } else { fallbackCopy(prompt); done(); }
+    };
   }
 
   function colBody(id) { return document.getElementById('col-' + id.replace(/[^a-zA-Z0-9]/g, '')); }
@@ -378,7 +433,7 @@
         aiStates[m] = { history: [{ role: 'assistant', content: reply }] };
         colBody(m).innerHTML = '<div class="ai-block">' + mdLite(reply) + '</div>';
       } catch (e) {
-        colBody(m).innerHTML = '<div class="ai-block warn">断卦失败：' + esc(e.message) + '</div>';
+        renderFailBox(colBody(m), m, [], e);
       }
     }));
     $('#chatBox').hidden = !Object.keys(aiStates).length;
@@ -404,7 +459,12 @@
         aiStates[m].history.push({ role: 'assistant', content: reply });
         if (loadEl) loadEl.innerHTML = mdLite(reply);
       } catch (e) {
-        if (loadEl) loadEl.innerHTML = '<span style="color:var(--cinnabar)">出错：' + esc(e.message) + '</span>';
+        if (loadEl) {
+          const box = document.createElement('div');
+          loadEl.innerHTML = '';
+          loadEl.appendChild(box);
+          renderFailBox(box, m, aiStates[m].history.slice(0, -1), e);
+        }
       }
     }));
     autoSaveCast();
