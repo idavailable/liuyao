@@ -44,9 +44,11 @@ export async function onRequestPost(context) {
 
   const base = (env.LLM_BASE_URL || 'https://api.deepseek.com/v1').replace(/\/$/, '');
   const model = env.LLM_MODEL || 'deepseek-chat';
-  // Google 原生接口（generativelanguage.googleapis.com）走 generateContent + x-goog-api-key；
-  // 其余按 OpenAI 兼容接口处理（DeepSeek 等）
-  const isGoogle = base.indexOf('generativelanguage.googleapis.com') !== -1;
+  // Google 原生接口（generativelanguage.googleapis.com 或 AI Gateway 的 google-ai-studio 原生路径）
+  // 走 generateContent + x-goog-api-key，并关闭 thinking（思考路径常因 high demand 503）；
+  // 其余（含 Gateway 的 /openai 兼容路径、DeepSeek 等）按 OpenAI 兼容接口处理
+  const isGoogle = base.indexOf('generativelanguage.googleapis.com') !== -1 ||
+    (base.indexOf('google-ai-studio') !== -1 && base.slice(-7) !== '/openai');
 
   const messages = [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: panText }];
   history.forEach(function (m) {
@@ -65,7 +67,7 @@ export async function onRequestPost(context) {
     payload = {
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
       contents: contents,
-      generationConfig: { temperature: 0.3 }
+      generationConfig: { temperature: 0.3, thinkingConfig: { thinkingBudget: 0 } }
     };
   } else {
     url = base + '/chat/completions';
