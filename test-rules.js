@@ -161,6 +161,20 @@ eq('申子辰三合水局', sh.length === 1 && sh[0].text.indexOf('三合水局'
 const shNo = C.ruleSanHe({ lines: fakePan.lines.map(function (l) { return Object.assign({}, l, { moving: false }); }) }, '官鬼');
 eq('无动爻不成局', shNo.length, 0);
 
+// 中-4（2026-11-12）：静爻不入候选池，但可补齐已成之局。
+// 风泽中孚（己亥月／庚寅日，四爻未土动）：亥＝月建、未＝动爻、卯＝二爻与上爻静，
+// 亥卯未三支俱全，旧版只统计动爻+变爻+日月，判成「虚一待用」并要求
+// 「待第三支值日引动」——而第三支本就在卦里。
+// 反向用例同时钉住：寅午戌缺戌（卦中无戌），仍须判虚一待用，不能一律改成成局。
+const panZhf = C.paipan([1, 1, 0, 6, 1, 1], new Date('2026-11-12T10:00:00+08:00'));
+const shZ = C.ruleSanHe(panZhf, '子孙');
+const shMu = shZ.filter(function (x) { return x.rule.indexOf('三合木局') >= 0; })[0];
+const shHuo = shZ.filter(function (x) { return x.rule.indexOf('三合火局') >= 0; })[0];
+eq('亥卯未三支全（卯为静爻）→ 判成局', !!shMu && shMu.text.indexOf('成三合木局') >= 0, true);
+eq('成局文案不再自称虚一待用', !!shMu && shMu.text.indexOf('虚一待用') < 0, true);
+eq('静爻补齐标注来源', !!shMu && shMu.text.indexOf('在局中') >= 0, true);
+eq('寅午戌缺戌（卦中无戌）→ 仍虚一待用', !!shHuo && shHuo.text.indexOf('虚一待用') >= 0, true);
+
 // ---------- 8. analyze 全链：无 score、trend 合法 ----------
 // 乾为天 六爻全动（用神官鬼=午火四爻）：2026-06-15（甲午月? 实算）
 const panA = C.paipan([9, 9, 9, 9, 9, 9], new Date(2026, 5, 15, 10, 0));

@@ -270,5 +270,19 @@ has('app.js 流式另设硬上限', appSrc, 'AI_STREAM_MAX_MS');
 has('app.js 按字节重置空闲计时', appSrc, 'onTick');
 has('app.js 区分「只想不答」', appSrc, 'REASONING_ONLY');
 
+// ---------- 11. 分档纪律与「有…没考」口语句式（2026-11-12） ----------
+// 实测样本：引擎判「对象阶段＝关键缺项」「进程状态＝低风险」，产出却写成
+// 「对象阶段与进程状态（高风险缺项）」并给了条件分支——软缺被合并升格成硬缺。
+// 另一处：「还有一门英语没考」这种最普通的口语结构不被 process 词表识别，
+// 明明说了进程，仍被判缺，等于把已明示的信息又当假设猜一遍。
+const examQ = P.judge('孩子这次期中考试能不能进班级前十，还有一门英语没考', '');
+eq('「还有一门…没考」→ 进程状态已明示', examQ.slots.filter(function (s) { return s.id === 'process'; })[0].known, true);
+eq('该题不含高风险缺项（对象阶段为软缺）', examQ.highFlip.length, 0);
+has('前提块对软缺写明分档纪律', P.block('孩子这次期中考试能不能进班级前十，还有一门英语没考', ''), '分档纪律');
+has('无高风险缺项时明说不得要求分支', P.block('孩子这次期中考试能不能进班级前十，还有一门英语没考', ''), '本卦无高风险缺项');
+// 反向：不得因补词表而把「没考虑」误判成进程状态。
+eq('「没考虑过复读」不误判进程状态',
+  P.judge('这孩子没考虑过复读', '').slots.filter(function (s) { return s.id === 'process'; })[0].known, false);
+
 console.log('PASS:', pass, ' FAIL:', fail);
 if (fail > 0) process.exit(1);

@@ -596,19 +596,42 @@
       // 中-3（2026-11-03）：every（三支全齐）→ 命中两支即成局（虚一待用）。
       // 《增删卜易》zsby-01525「虚一待用，果升于卯月」——两支已现、第三支待值，
       // 是成局的中间态而非不成局；缺两支（只临一支）仍不成局。
-      let got = 0;
+      //
+      // 中-4（2026-11-12）：静爻不入候选池（静不能引动），但**可补齐已成之局**。
+      // 卦中三支俱全即成局，静爻虽不发动亦在局中；旧版把静爻完全排除，使
+      // 「两支已现（动／变／日月）+ 第三支在卦中安静」被判成「虚一待用」，并输出
+      // 「待第三支值日引动」——而第三支本就在卦里，不必待。
+      // 实测：风泽中孚（己亥月庚寅日、四爻未动）亥卯未三支全（亥＝月建、未＝动爻、
+      // 卯＝二爻及上爻静），旧版判「虚一待用」；400 随机盘中 178 个局次同此误判。
+      // 条件收紧：只在已命中两支（来自动／变／日月）时才用静爻补第三支；
+      // 「一支动／日月 + 两支静」仍不成局。
+      const hits = [], miss = [];
       sh.zhis.forEach(function (z) {
         const s = src.filter(function (x) { return x.zhiIdx === z && used.indexOf(x.owner) < 0; })[0];
         if (s) {
           used.push(s.owner);
           detail.push(ZHI[z] + '（' + s.from + '）');
-          got++;
+          hits.push(z);
         } else {
           detail.push(ZHI[z] + '（待用）');
+          miss.push(z);
         }
       });
-      if (got < 2) return; // 至多临一支，不成局
-      const partial = got === 2;
+      if (hits.length < 2) return; // 至多临一支，不成局
+      let partial = hits.length === 2;
+      if (partial && miss.length === 1) {
+        const still = pan.lines.filter(function (l) {
+          return !l.moving && l.zhiIdx === miss[0];
+        })[0];
+        if (still) {
+          partial = false;
+          const at = detail.indexOf(ZHI[miss[0]] + '（待用）');
+          if (at >= 0) {
+            detail[at] = ZHI[miss[0]] + '（本卦' + LINE_NAMES[still.pos] +
+              (still.lq || '') + still.zhi + '静，在局中）';
+          }
+        }
+      }
       const byBian = detail.some(function (d) { return d.indexOf('（变爻') >= 0; });
       const rel = Y ? (REL_SANHE[relation5(Y.wx, sh.wx)] || { relation: '', verdict: '' }) : { relation: '', verdict: '' };
       js.push({
