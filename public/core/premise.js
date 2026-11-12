@@ -601,8 +601,8 @@
     // 样本够了再谈是否升级（见 docs/TODO.md「前提层遗留」）。
     if (rank >= 3) {
       const gr = yqGrainRank(t);
-      // 兜底刻度提高门槛：两档差是常见写法（月级事项给季），三档才是真不对。
-      if (gr - rank >= (soft ? 3 : 2)) {
+      // 差两档即提醒，兜底与否都一样：月级事项给「明年三月」不是口径问题，是跨度差一年。
+      if (gr - rank >= 2) {
         return {
           ok: false, code: 'YINGQI_TOO_COARSE', level: 'warn',
           msg: '应期刻度为「' + GRAIN_LABEL[gr] + '」（' + t + '），比此事跨度「' + label +

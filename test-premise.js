@@ -180,6 +180,8 @@ eq('同域·明示月刻度仍判过细', P.checkYingqi('甲子日', P.judge('�
 eq('同域·兜底旬+月级不判粗', P.checkYingqi('11月内', P.judge('他还会联系我吗', '')).ok, true);
 eq('同域·兜底旬+年级仍判粗', P.checkYingqi('明年三月', P.judge('他还会联系我吗', '')).code, 'YINGQI_TOO_COARSE');
 eq('同域·兜底旬+季级不判（差两档常见）', P.checkYingqi('上半年', P.judge('他还会联系我吗', '')).ok, true);
+// 软化不等于放水：兜底「月」事项给「明年三月」仍是跨一年，照判过粗。
+eq('同域·兜底月+年级仍判粗', P.checkYingqi('明年三月', P.judge('孩子这次数学考得怎么样', '__custom__')).code, 'YINGQI_TOO_COARSE');
 // 与引擎应期窗口的和解：引擎窗口本身是「干支日＋公历区间」的日级节点，跨年之事
 // 引用它作**辅**不算错，只要主刻度是月／季／流程节点。混为一谈会误伤引擎的常规输出。
 eq('同域·年+干支日+月份=只作辅（warn 非 violation）', P.checkYingqi('癸未日前后（约 11月5日—11月7日）', yearSpan).code, 'YINGQI_DAY_AS_AUX');
