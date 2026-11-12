@@ -38,29 +38,33 @@
   // 每槽位除工程字段外，附一条**古法出处**（source）：
   // 预检块在高风险缺项时把原文一并给出，模型据此判定而非据「工程规则」判定。
   // 引文按通行本大意，版本字句待校（见 docs/proposal-premise-metadata.md「古法出处」）。
+  // flip（2026-11-12）＝「缺了会不会把吉凶方向翻掉」。只有 flip 的缺项才值得
+  // 要求「首轮不得给出单一吉凶、须给条件分支」；其余关键缺项只要求写明假设、
+  // 照常给结论。旧版把领域包的 decisive 一律当翻转项，于是「缺对象阶段」也会
+  // 逼模型给分支——结论变含糊，而含糊不等于更准（用户反馈：像免责声明）。
   const SLOTS = [
     {
-      id: 'timeSpan', label: '时间范围', risk: 'mid',
+      id: 'timeSpan', label: '时间范围', risk: 'mid', flip: false,
       ask: '此事的判定跨度是什么（这几天／这个月／今年）',
       source: '「远事定之以年月，近事应之于日时」（远近当分）'
     },
     {
-      id: 'stage', label: '对象阶段', risk: 'mid',
+      id: 'stage', label: '对象阶段', risk: 'mid', flip: false,
       ask: '当事人此刻处在哪个阶段（未开始／进行中／已出结果待揭晓）',
       source: '「远事定之以年月，近事应之于日时」——不知阶段则远近无从定'
     },
     {
-      id: 'standard', label: '目标标准', risk: 'mid',
+      id: 'standard', label: '目标标准', risk: 'mid', flip: true,
       ask: '要达成的具体目标与门槛是什么',
       source: '「须指其所疑之事而占之」——目标不具体，吉凶无从判'
     },
     {
-      id: 'process', label: '进程状态', risk: 'mid',
+      id: 'process', label: '进程状态', risk: 'mid', flip: true,
       ask: '事情推进到哪一步了（还没开始／已提交／已出结果）',
       source: '「卦之恍惚者，再占一卦，不可妄断」'
     },
     {
-      id: 'rules', label: '规则环境', risk: 'low',
+      id: 'rules', label: '规则环境', risk: 'low', flip: false,
       ask: '有哪些外部规则、政策或条件会影响结果',
       source: '只影响细节，不夺吉凶主线'
     }
@@ -140,7 +144,7 @@
       }
     },
     {
-      name: '升学', re: /升学|考学|考研|考公|中考|高考|考上|考试|备考|报名|录取|招生|志愿|分数线|上岸|复读|择校|学位|学校|转学/,
+      name: '升学', re: /升学|考学|考研|考公|中考|高考|考上|考试|备考|报名|录取|招生|志愿|分数线|上岸|复读|择校|学位|学校|转学|考得|考完|考了|发挥(?:得|如|失常|正常|超常)|成绩|出分|模考|期中|期末|测评/,
       pack: {
         anchors: ['招生年度／考期'], decisive: ['timeSpan', 'standard', 'stage'], typicalSpan: 'month',
         spanNote: '升学、招考以「招生年度／考期」为刻度，不等同于自然年；录取以流程节点（出分、投档、录取）为刻度。'
@@ -357,10 +361,13 @@
         const needs = pack.decisive.indexOf(s.id) >= 0;
         risk = (needs && GOAL_RE.test(q)) ? 'high' : 'mid';
       }
-      return { id: s.id, label: s.label, ask: s.ask, known: known, hit: hit, partial: partial, risk: risk };
+      return { id: s.id, label: s.label, ask: s.ask, known: known, hit: hit, partial: partial, risk: risk, flip: !!s.flip };
     });
     const missing = slots.filter(function (s) { return !s.known; });
     const high = slots.filter(function (s) { return s.risk === 'high'; });
+    // 只有「翻转项」缺失才算完整性上的『缺失』；对象阶段这类关键但不改方向的
+    // 缺项落『前提未定』（照常出结论，写明假设即可）。
+    const highFlip = high.filter(function (s) { return s.flip; });
     const mid = slots.filter(function (s) { return s.risk === 'mid'; });
     // 口径歧义：题面用日历词（今年/本月），而本类事项的时间锚点不是日历（招生年度、
     // 结算周期、审理周期）→ 须写明按哪个口径算，否则「今年」会被默默当成自然年。
@@ -388,9 +395,10 @@
       slots: slots,
       missing: missing,
       high: high,
+      highFlip: highFlip,
       mid: mid,
       ambiguity: ambiguity,
-      completeness: high.length ? '缺失' : (missing.length || mid.length ? '前提未定' : '完整')
+      completeness: highFlip.length ? '缺失' : (missing.length || mid.length ? '前提未定' : '完整')
     };
   }
 
@@ -417,23 +425,41 @@
         return s.label + '「' + s.hit + '」' + (s.partial ? '（只见目标，未见具体门槛）' : '');
       }).join('；') + '\n';
     }
-    if (j.high.length) {
-      out += '- 高风险缺项：' + j.high.map(function (s) { return s.label; }).join('、') +
-        '——缺之会改变结论方向或应期量级：首轮不得给出单一吉凶与单一应期，须先说明缺什么、为何影响判断，再按可能情形给条件分支。\n';
-      // 古法依据：把缺项对应到书上的原话，而不是只说「工程规则要求」。
-      // 措辞注明「用于判断，不必写入正文」，避免模型把这段原样搬进断语。
-      const srcs = [];
-      for (let i = 0; i < j.high.length; i++) {
+    // 缺项按「是否翻转吉凶方向」分两档（2026-11-12）：
+    //   翻转项（目标门槛、进程状态）→ 首轮不得给单一吉凶，须给条件分支；
+    //   关键但非翻转项（对象阶段等）→ 照常给结论，只要求写明假设。
+    // 旧版把领域包 decisive 一律当翻转项，用户看到的是「结论+置信下调+免责说明」，
+    // 结论并没有因此更准，只是更难被证伪。
+    const highFlip = j.high.filter(function (s) { return s.flip; });
+    const highSoft = j.high.filter(function (s) { return !s.flip; });
+    // 缺项 → 古法出处（只在有缺项时写，且注明不必搬进正文）。
+    function srcsOf(list) {
+      const arr = [];
+      for (let i = 0; i < list.length; i++) {
         for (let k = 0; k < SLOTS.length; k++) {
-          if (SLOTS[k].id === j.high[i].id && SLOTS[k].source) {
-            srcs.push(j.high[i].label + '：' + SLOTS[k].source);
+          if (SLOTS[k].id === list[i].id && SLOTS[k].source) {
+            arr.push(list[i].label + '：' + SLOTS[k].source);
           }
         }
       }
+      return arr;
+    }
+    if (highFlip.length) {
+      out += '- 高风险缺项（关系到吉凶方向）：' + highFlip.map(function (s) { return s.label; }).join('、') +
+        '——缺之会改变结论方向或应期量级：首轮不得给出单一吉凶与单一应期，须先说明缺什么、为何影响判断，再按可能情形给条件分支。\n';
+      // 古法依据：把缺项对应到书上的原话，而不是只说「工程规则要求」。
+      // 措辞注明「用于判断，不必写入正文」，避免模型把这段原样搬进断语。
+      const srcs = srcsOf(highFlip);
       if (srcs.length) {
         out += '- 古法依据（用于判断，不必写入正文）：' + srcs.join('；') +
           '。缺项即「所疑之事」未说清，古法不许含糊，故须先澄清、再断。\n';
       }
+    }
+    if (highSoft.length) {
+      const srcs2 = srcsOf(highSoft);
+      out += '- 关键缺项（影响断法细节，不改吉凶主线）：' + highSoft.map(function (s) { return s.label; }).join('、') +
+        '——照常给出吉凶结论，但须在正文写明所设假设（如「假定已考完待出分」），不得默认为已知。' +
+        (srcs2.length ? '古法依据（不必写入正文）：' + srcs2.join('；') + '。' : '') + '\n';
     }
     const lowMissing = j.missing.filter(function (s) { return s.risk === 'low'; });
     if (lowMissing.length) {
@@ -519,6 +545,13 @@
     const rank = (UNITS[unit] || { rank: 0 }).rank;
     const label = (UNITS[unit] || { label: '未定' }).label;
     if (!rank) return { ok: true, code: 'SPAN_UNKNOWN', level: 'ok', msg: '' };
+    const OK = { ok: true, code: 'OK', level: 'ok', msg: '' };
+    // 刻度来自「本类典型值兜底」而非题面时（judge().spanFromPack），它只是引擎的
+    // 假设，不是用户的口径——拿它去判模型写错了，属于「用假设证明结论」。
+    // 2026-11-12 实测反例：「孩子这次数学考得怎么样」按子女包兜底「旬」，
+    // 模型写「11月内」被判 TOO_COARSE「尺度过粗」；而这事本就是考完到出分。
+    // 兜底时只保留「跨三档以上」的极端偏差（旬级事项给到年），其余放行。
+    const soft = !!(span && span.spanFromPack);
     const dayGrain = DAY_GRAIN_RE.test(t);
     // 粗刻度：月份／季度／流程节点。应期里若已有粗刻度，日级节点只是辅助定位，
     // 不构成「粒度细于跨度」的硬冲突（引擎窗口本身就是「癸未日前后＋公历区间」的写法）。
@@ -527,12 +560,14 @@
     // （三月中旬）。旧版只认阿拉伯数字，「三月中旬甲子日前后」被误报 TOO_FINE（中-11）。
     const hasRange = /\d+\s*月\s*\d+\s*日|\d+\s*月\s*[上中下]旬|\d+\s*月\s*[底初中]|[一二三四五六七八九十]月\s*[上中下]旬|[一二三四五六七八九十]月\s*[底初中]|[一二三四五六七八九十]月\s*\d+\s*日/.test(t);
     if (rank >= 4 && dayGrain && !coarse) {
+      if (soft) return OK;
       return {
         ok: false, code: 'YINGQI_TOO_FINE', level: 'violation',
         msg: '应期写成了日级（' + t + '），而此事以「' + label + '」为刻度——粒度细于时间跨度，无法成立。'
       };
     }
     if (rank >= 4 && dayGrain && coarse) {
+      if (soft) return OK;
       // 粗刻度词在首个日级词之前 = 主刻度先行——「11月中旬（约 11月10日—11月20日）」
       // 正是提示词教模型写的「主刻度＋区间注」格式，合规；
       // 日级抢在粗刻度前（「约11月10日应，11月中旬确认」）才是辅倒置，须提醒。
@@ -547,12 +582,15 @@
       };
     }
     if (rank === 3 && dayGrain && !hasRange) {
+      if (soft) return OK;
       return {
         ok: false, code: 'YINGQI_TOO_FINE', level: 'warn',
         msg: '应期写成日级（' + t + '），此事以「月」为刻度：日级只在旬内之事成立，须同时给出月份或流程节点作主刻度。'
       };
     }
     if (rank <= 2 && !dayGrain && (YEAR_GRAIN_RE.test(t) || MONTH_GRAIN_RE.test(t))) {
+      // 兜底刻度下月级不作数（考完等出分常落月内），只拦年级这种跨三档的偏差。
+      if (soft && yqGrainRank(t) - rank < 3) return OK;
       return {
         ok: false, code: 'YINGQI_TOO_COARSE', level: 'warn',
         msg: '应期写成' + (YEAR_GRAIN_RE.test(t) ? '年' : '月') + '级（' + t + '），而此事是' + label + '内之事——尺度过粗，起不到可核对的作用。'
@@ -563,7 +601,8 @@
     // 样本够了再谈是否升级（见 docs/TODO.md「前提层遗留」）。
     if (rank >= 3) {
       const gr = yqGrainRank(t);
-      if (gr - rank >= 2) {
+      // 兜底刻度提高门槛：两档差是常见写法（月级事项给季），三档才是真不对。
+      if (gr - rank >= (soft ? 3 : 2)) {
         return {
           ok: false, code: 'YINGQI_TOO_COARSE', level: 'warn',
           msg: '应期刻度为「' + GRAIN_LABEL[gr] + '」（' + t + '），比此事跨度「' + label +

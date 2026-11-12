@@ -2322,9 +2322,13 @@
               premiseLine = '<div class="' + (okP ? 'muted' : 'warn') + '" style="margin-top:4px;font-size:12px">前提 ' +
                 esc(cc.premise) + '</div>';
             } else if (pj && pj.high.length) {
-              // 模型漏报前提完整性，而引擎判定有高风险缺项：这是契约未遵守，须显式提示。
+              // 模型漏报前提完整性，而引擎判定有关键缺项：这是契约未遵守，须显式提示。
+              // 优先列「翻转吉凶方向」的缺项；只有软缺项（对象阶段等）时措辞降为「关键缺项」——
+              // 旧版一律写「高风险」，把「不问也不会断反」的项说成了会断反（2026-11-12）。
+              const hardMiss = (pj.highFlip && pj.highFlip.length) ? pj.highFlip : pj.high;
               premiseLine = '<div class="warn" style="margin-top:4px;font-size:12px">前提 未申报（引擎预检：' +
-                esc(pj.high.map(function (x) { return x.label; }).join('、')) + '属高风险缺项）</div>';
+                esc(hardMiss.map(function (x) { return x.label; }).join('、')) +
+                ((pj.highFlip && pj.highFlip.length) ? '属高风险缺项' : '属关键缺项') + '）</div>';
             }
             let yqLine = '';
             if (yqCheck && !yqCheck.ok) {
@@ -2664,7 +2668,7 @@
       ]
     };
     try { localStorage.setItem('ly.vote.cast', JSON.stringify(spec)); } catch (e) { /* 隐私模式可能禁用，页面会退化为样例 */ }
-    window.open('/vote.html?v=20261109a', '_blank');
+    window.open('/vote.html?v=20261112a', '_blank');
   };
 
   // ---------- 卦例库口令登录 ----------

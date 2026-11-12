@@ -79,6 +79,17 @@ has('升学·目标标准引所指之疑', P.block('今年能不能考上市重�
 eq('短讯·无高风险缺项（不误伤）', P.judge('这周会不会来电', '父母').high.length, 0);
 eq('短讯·预检块不写古法依据', P.block('这周会不会来电', '父母').indexOf('古法依据'), -1);
 eq('升学·目标标准为部分明示', edu.slots.filter(s => s.id === 'standard')[0].partial, true);
+// 缺项分两档（2026-11-12）：只有「翻转吉凶方向」的缺项才要求给条件分支；
+// 对象阶段这类关键但不改方向的，只要求写明假设。旧版一律拦，输出变成免责声明。
+has('升学·目标标准属翻转项（要求分支）', P.block('今年能不能考上市重点', '__custom__'), '不得给出单一吉凶');
+has('升学·对象阶段降为关键缺项', P.block('今年能不能考上市重点', '__custom__'), '不改吉凶主线');
+eq('升学·翻转项缺才记「缺失」', P.judge('今年能不能考上市重点', '__custom__').highFlip.map(function (x) { return x.label; }).join(','), '目标标准');
+// 领域包抢词（2026-11-12）：考试类问法没有「考试/考上」字样时曾落到子女包（旬兜底），
+// 月级应期被误判过粗，进程状态还被升为高风险。
+const kaode = P.judge('孩子这次数学考得怎么样', '__custom__');
+eq('升学·考得/成绩类问法命中升学包', kaode.pack.label, '升学');
+eq('升学·考试类问法兜底月刻度', kaode.effUnit, 'month');
+eq('升学·考试类问法不因子女包落旬', kaode.effUnit === 'xun', false);
 
 // 短讯案例：旬内二元事件，缺「目标标准」不算高风险——否则每句「会不会」都要先追问。
 const call = P.judge('这周会不会来电', '父母');
@@ -162,8 +173,13 @@ eq('同域·年+年份=通过（不自己打自己）', P.checkYingqi('明年招
 eq('同域·空应期不报', P.checkYingqi('', yearSpan).ok, true);
 eq('同域·null 不抛', P.checkYingqi(null, yearSpan).ok, true);
 eq('同域·未知跨度不报', P.checkYingqi('甲子日', { unit: 'unknown' }).ok, true);
-// judge 结果也能直接喂进去（取 effUnit 兜底刻度）
-eq('同域·judge 结果可直用', P.checkYingqi('甲子日', P.judge('官司什么时候能了结', '官鬼')).ok, false);
+// judge 结果也能直接喂进去（取 effUnit 兜底刻度）——但兜底刻度只提示、不判错
+// （2026-11-12）：题面没给跨度时「月」是引擎猜的，拿它判模型写错＝用假设证明结论。
+eq('同域·兜底刻度不判过细（假设非证据）', P.checkYingqi('甲子日', P.judge('官司什么时候能了结', '官鬼')).ok, true);
+eq('同域·明示月刻度仍判过细', P.checkYingqi('甲子日', P.judge('这个月官司能了结吗', '官鬼')).ok, false);
+eq('同域·兜底旬+月级不判粗', P.checkYingqi('11月内', P.judge('他还会联系我吗', '')).ok, true);
+eq('同域·兜底旬+年级仍判粗', P.checkYingqi('明年三月', P.judge('他还会联系我吗', '')).code, 'YINGQI_TOO_COARSE');
+eq('同域·兜底旬+季级不判（差两档常见）', P.checkYingqi('上半年', P.judge('他还会联系我吗', '')).ok, true);
 // 与引擎应期窗口的和解：引擎窗口本身是「干支日＋公历区间」的日级节点，跨年之事
 // 引用它作**辅**不算错，只要主刻度是月／季／流程节点。混为一谈会误伤引擎的常规输出。
 eq('同域·年+干支日+月份=只作辅（warn 非 violation）', P.checkYingqi('癸未日前后（约 11月5日—11月7日）', yearSpan).code, 'YINGQI_DAY_AS_AUX');
