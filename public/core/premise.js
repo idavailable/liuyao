@@ -102,13 +102,13 @@
     stage: /应届|在读|在校|大[一二三四]|高[一二三]|初[一二三]|研[一二三]|在职|离职|待业|失业|试用期|实习|刚毕业|毕业|退休|孕期|备孕|术后|康复期|住院|未成年|考生/,
     // 目标标准：既认「目标」（考上／录取／入职…），也认「门槛」（分数线／名额／预算…）。
     // 只命中目标而不见门槛，仍算部分明示——提示里会要求写明所设门槛口径。
-    standard: /分数线|录取线|达线|过线|达标|门槛|标准|要求|名额|指标|预算|金额|多少钱|几分|多少分|考上|录取|上榜|入职|拿到|签约|成交|通过|中标|晋升|提薪|offer/i,
+    standard: /分数线|录取线|达线|过线|达标|门槛|标准|要求|名额|指标|预算|金额|多少钱|几分|多少分|考上|考到|考够|考出|上\d+\s*分|录取|上榜|入职|拿到|签约|成交|通过|中标|晋升|提薪|offer/i,
     process: /还没|尚未|已经|正在|刚|开始|报名|提交|材料|面试|笔试|初试|复试|出结果|待定|进行中|流程|初审|复审|上诉|开庭|立案|复查|排期|公示|摇号/,
     rules: /政策|新规|规定|限购|限号|审批|批文|许可|资格|制度|规则|户籍|社保|学区|指标生/
   };
 
   // 门槛细分：只有命中这一组，才算「具体标准已明示」；只命中目标词则算部分明示。
-  const THRESHOLD_RE = /分数线|录取线|达线|过线|达标|门槛|名额|指标|预算|金额|多少分|几分/i;
+  const THRESHOLD_RE = /分数线|录取线|达线|过线|达标|门槛|名额|指标|预算|金额|多少分|几分|\d+\s*分(?!钟)/i;
 
   // 目标类问法：有明确「达成某结果」的动词，才存在「门槛」这个槽位。
   // 「这周会不会来电」是二元事件、无门槛，「今年能不能考上市重点」有门槛——
@@ -144,7 +144,7 @@
       }
     },
     {
-      name: '升学', re: /升学|考学|考研|考公|中考|高考|考上|考试|备考|报名|录取|招生|志愿|分数线|上岸|复读|择校|学位|学校|转学|考得|考完|考了|发挥(?:得|如|失常|正常|超常)|成绩|出分|模考|期中|期末|测评/,
+      name: '升学', re: /升学|考学|考研|考公|中考|高考|考上|考试|考试中|备考|报名|录取|招生|志愿|分数线|上岸|复读|择校|学位|学校|转学|考得|考完|考了|正在考|在考(?!虑)|考着呢|发挥(?:得|如|失常|正常|超常)|成绩|出分|模考|期中|期末|测评/,
       pack: {
         anchors: ['招生年度／考期'], decisive: ['timeSpan', 'standard', 'stage'], typicalSpan: 'month',
         spanNote: '升学、招考以「招生年度／考期」为刻度，不等同于自然年；录取以流程节点（出分、投档、录取）为刻度。'
@@ -297,8 +297,27 @@
     return null;
   }
 
+  // 事件日 ≠ 结果日（2026-11-12）：问「孩子今天正在考试，不知道什么时候出分」，
+  // 「今天」是考试发生日，要等的是出分。旧版取首个时间词判成日级跨度，应期只能写日，
+  // 反而更不可核对。只在三个条件同时满足时降级——
+  //   ① 题面有结果节点词（出分/公布/结果/通知…）；
+  //   ② 题面有「不知道/什么时候」这类未知表达（「明天出结果吗」不降级：那就是结果日）；
+  //   ③ 命中的是单日词（今天/明天/后天/当天），不是「两天/三天」这种跨度词。
+  const RESULT_NODE_RE = /出分|放榜|公布|结果|通知|回复|消息|答复|录用|录取|判决|宣判|中标|打款|到账|公示/;
+  const UNKNOWN_WHEN_RE = /不知道|不清楚|不确定|说不准|没说|什么时候|何时|几时|哪[天日]|未知/;
+  const EVENT_DAY_RE = /今[天日夜晚早]|明[天日晚早]|后天|当天|当日/g;
+
   function spanOf(question) {
-    const q = String(question == null ? '' : question);
+    let q = String(question == null ? '' : question);
+    let eventHit = '';
+    if (RESULT_NODE_RE.test(q) && UNKNOWN_WHEN_RE.test(q)) {
+      const m = q.match(EVENT_DAY_RE);
+      if (m) {
+        eventHit = m[0];
+        // 置空格而非删除：避免前后字拼成新词（「今天考试」→「考试」仍成立，但「今天天」不会出现）
+        q = q.replace(/今[天日夜晚早]|明[天日晚早]|后天|当天|当日/g, '　');
+      }
+    }
     for (let i = 0; i < SPAN_RULES.length; i++) {
       const r = SPAN_RULES[i];
       const hit = firstUnnegated(q, r.re);
@@ -306,11 +325,11 @@
         const u = UNITS[r.unit];
         return {
           unit: r.unit, rank: u.rank, label: u.label, days: u.days,
-          hit: hit, calendar: CALENDAR_RE.test(hit), explicit: true
+          hit: hit, calendar: CALENDAR_RE.test(hit), explicit: true, eventHit: eventHit
         };
       }
     }
-    return { unit: 'unknown', rank: 0, label: '未明示', days: 0, hit: '', calendar: false, explicit: false };
+    return { unit: 'unknown', rank: 0, label: '未明示', days: 0, hit: '', calendar: false, explicit: false, eventHit: eventHit };
   }
 
   /**
@@ -416,7 +435,11 @@
     let out = '【前提预检（规则链 · 非推断）】\n';
     out += '- 时间范围：' + (j.span.explicit
       ? ('题面「' + j.span.hit + '」→ 以「' + j.span.label + '」为刻度')
-      : ('未见明示 → 以本类典型刻度「' + j.effLabel + '」作应期上限（兜底，非题面口径，须在正文写明此假设）')) + '\n';
+      : (j.span.eventHit
+        ? ('题面「' + j.span.eventHit + '」是**事件发生日**（考试／面试当天），不是结果兑现日；' +
+          '未见结果跨度 → 以本类典型刻度「' + j.effLabel + '」作应期上限（兜底，须在正文写明此假设），' +
+          '不得把「' + j.span.eventHit + '」当成出分日期')
+        : ('未见明示 → 以本类典型刻度「' + j.effLabel + '」作应期上限（兜底，非题面口径，须在正文写明此假设）'))) + '\n';
     if (j.ambiguity) out += '- 口径歧义：' + j.ambiguity.note + '\n';
     // 已明示的槽位只列命中词，缺项按风险分级列——省 token，且避免模型把预检误当成新盘面事实。
     const known = j.slots.filter(function (s) { return s.known; });

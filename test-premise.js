@@ -90,6 +90,19 @@ const kaode = P.judge('孩子这次数学考得怎么样', '__custom__');
 eq('升学·考得/成绩类问法命中升学包', kaode.pack.label, '升学');
 eq('升学·考试类问法兜底月刻度', kaode.effUnit, 'month');
 eq('升学·考试类问法不因子女包落旬', kaode.effUnit === 'xun', false);
+// 门槛与事件日（2026-11-12）。旧版「考到110分」不算门槛，明明给了目标仍标「标准未明示」；
+// 「今天正在考试，不知道什么时候出分」把考试日当判定跨度，应期被压成日级。
+const kd = P.judge('孩子这次数学考试，能不能考到110分', '__custom__');
+eq('标准·110分算命中', kd.slots.filter(function (s) { return s.id === 'standard'; })[0].known, true);
+eq('标准·110分算门槛已明示（非部分）', kd.slots.filter(function (s) { return s.id === 'standard'; })[0].partial, false);
+eq('标准·3分钟不算门槛', P.judge('3分钟后能到吗', '__custom__').slots.filter(function (s) { return s.id === 'standard'; })[0].known, false);
+eq('事件日·今天不算结果跨度', P.spanOf('孩子今天正在考试，不知道什么时候出分').unit, 'unknown');
+eq('事件日·记录被降级的词', P.spanOf('孩子今天正在考试，不知道什么时候出分').eventHit, '今天');
+eq('事件日·明天出结果仍是日级', P.spanOf('明天出结果吗').unit, 'day');
+eq('事件日·今天下午收回复仍是日级', P.spanOf('今天下午能收到回复吗').unit, 'day');
+eq('事件日·降级后仍取后续跨度', P.spanOf('今天考试，不知道这周能不能出分').unit, 'xun');
+eq('升学·正在考类问法命中', P.judge('孩子现在正在考数学，能不能考到110分', '__custom__').pack.label, '升学');
+eq('升学·「在考虑」不误伤', P.judge('现在在考虑要不要换工作', '__custom__').pack.label === '升学', false);
 
 // 短讯案例：旬内二元事件，缺「目标标准」不算高风险——否则每句「会不会」都要先追问。
 const call = P.judge('这周会不会来电', '父母');
