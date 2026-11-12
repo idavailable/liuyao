@@ -303,7 +303,8 @@ async function launchBrowser() {
     await page.click('#btnChat');
     await page.waitForFunction(() => document.body.innerText.indexOf('正式追问回答') >= 0, null, { timeout: 10000 });
     eq('DRAFT_ONLY 追问触发跨模型降级', calls.length, 3);
-    eq('降级请求改用可用模型', calls[2].model, 'gemini-3.6-flash');
+    // 2026-11-12：fallback 次序改为 3.8 → deepseek → 3.6（3.6 当日复测 0/3 且 4-10s 早断）
+    eq('降级请求改用可用模型', calls[2].model, 'gemini-3.8-flash');
     const shownB5 = await page.evaluate(() => document.body.innerText);
     eq('草稿不展示为追问回答', shownB5.indexOf('草稿误作回答') < 0, true);
     eq('正式回答正常展示', shownB5.indexOf('正式追问回答') >= 0, true);

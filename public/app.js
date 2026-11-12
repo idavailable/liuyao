@@ -1013,7 +1013,7 @@
   // ---------- AI 断卦 / 进阶探讨 / 卦例库（多模型对比） ----------
   // 模型清单：初始为内置默认，页面加载后从 /api/models 动态拉取（GPT 清单由后台 GPT_MODELS 变量驱动）
   let MODELS = [
-    { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', pv: 'Google', tip: '快 · 偶发断稿' },
+    { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', pv: 'Google', tip: '快 · 易早断' },
     { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', pv: 'Google', tip: '高峰易过载' },
     { id: 'deepseek-flash', label: 'DeepSeek V4.1 Flash', pv: 'DeepSeek', tip: '1017 快照' }
   ];
@@ -1024,8 +1024,9 @@
 
   // 已知模型的特性提示；后台自定义的模型名无提示
   const MODEL_TIPS = {
-    // 「快」是真的快（8–20 s），但实测 46% 断在句中，标签不能只写优点
-    'gemini-3.6-flash': '快 · 偶发断稿',
+    // 2026-11-12 复测：3.6 三次全断，且断得极早（4.4s/10.1s/6.4s，220/411/566 字），
+    // 比 10 月那批「停在 405 tokens」更短——「偶发断稿」这个说法已经过时了。
+    'gemini-3.6-flash': '快 · 易早断',
     'gemini-3.8-flash': '高峰易过载',
     'deepseek-flash': 'V4.1 · 1017',
     'gpt-6-luna': '便宜 · 快',
@@ -1078,16 +1079,24 @@
     return fb || m;
   }
 
-  /* 「这个模型压根不产出正文」时的替补（2026-10-28）。
+  /* 「这个模型压根不产出正文」时的替补（2026-10-28 首版，2026-11-12 改优先级）。
      与 retryModelFor 分工不同：那个只在同供应商里挑「更稳的兄弟」（gemini 3.6→3.8），
      对 deepseek 这种单模型供应商等于原地重跑，重试十次也是十次一样的空转。
-     这里要的是「换一家能出正文的」，优先级：
-       ① 实测稳定档 gemini-3.6-flash（2026-10-28 AI Gateway 日志：同一盘面 52s 完篇）；
-       ② 同供应商其它模型；③ 任一可用模型（后台未配 key 的 configured=false 排除）。 */
+     这里要的是「换一家能出正文的」。
+
+     2026-11-12 复测（同一盘面，8 次）：3.8 成功 1/2（失败是 82s 只发 1 个事件后
+     UPSTREAM_TIMEOUT）、3.6 成功 0/3（且断得极早：4.4s/10.1s/6.4s，220/411/566 字）、
+     deepseek 成功 1/3（失败是 1 万+ 事件全是思考、正文 0 字、78s 自然结束）。
+     ——10-28 那条「3.6 一次 52s 完篇」已经不成立，把它摆在替补第一位等于把
+     确定性失败排在前面。现在的次序：3.8（质量最好）→ deepseek（有 1/3 能成篇，
+     且成篇时质量可用）→ 3.6（只作为最后的「有字总比没字强」）。 */
+  const FALLBACK_ORDER = ['gemini-3.8-flash', 'deepseek-flash', 'gemini-3.6-flash'];
   function fallbackModelFor(m) {
     const usable = MODELS.filter(function (x) { return x.id !== m && x.configured !== false; });
-    const preferred = usable.filter(function (x) { return x.id === 'gemini-3.6-flash'; })[0];
-    if (preferred) return preferred.id;
+    for (let i = 0; i < FALLBACK_ORDER.length; i++) {
+      const hit = usable.filter(function (x) { return x.id === FALLBACK_ORDER[i]; })[0];
+      if (hit) return hit.id;
+    }
     const cur = MODELS.filter(function (x) { return x.id === m; })[0];
     const same = cur ? usable.filter(function (x) { return x.pv === cur.pv; })[0] : null;
     if (same) return same.id;
@@ -2678,7 +2687,7 @@
       ]
     };
     try { localStorage.setItem('ly.vote.cast', JSON.stringify(spec)); } catch (e) { /* 隐私模式可能禁用，页面会退化为样例 */ }
-    window.open('/vote.html?v=20261112c', '_blank');
+    window.open('/vote.html?v=20261112d', '_blank');
   };
 
   // ---------- 卦例库口令登录 ----------
