@@ -482,8 +482,11 @@ export async function onRequestPost(context) {
          上一轮只加了【直接成文】这四个短句、压在主提示词最末尾，实测无效——
          它前面压着 3004 字、39 个「不得」的审计清单，四条短句被淹掉了。
          真正的做法是**换整份提示词**（qimen 那份 953 字照办清单），而不是追加。
-         DEEPSEEK_PROMPT=full 可原地退回完整版（保留为对照实验入口）。 */
-      const mode = String(env.DEEPSEEK_PROMPT || 'full').toLowerCase() === 'lean' ? 'lean' : 'full';
+         【M26，2026-11-12】默认值由 'full' 改为 'lean'：M25 写完 lean 版后默认仍是 full，
+         等于这套定向方案一天都没生效过，线上跑的一直是那份 3004 字审计清单。
+         实测（同盘 3 次）：full 下 1 万+ 事件全是英文逐行 parse 盘面，正文 0 字。
+         DEEPSEEK_PROMPT=full 可原地退回（保留为对照实验入口）。 */
+      const mode = String(env.DEEPSEEK_PROMPT || 'lean').toLowerCase() === 'full' ? 'full' : 'lean';
       return { thinkBudget: null, maxTokens: mt, sysExtra: '', promptMode: mode };
     }
     return { thinkBudget: null, maxTokens: 0, sysExtra: '', promptMode: 'full' };

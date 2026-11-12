@@ -1015,12 +1015,16 @@
   let MODELS = [
     { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', pv: 'Google', tip: '快 · 易早断' },
     { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', pv: 'Google', tip: '高峰易过载' },
-    { id: 'deepseek-flash', label: 'DeepSeek V4.1 Flash', pv: 'DeepSeek', tip: '1017 快照' }
+    { id: 'deepseek-flash', label: 'DeepSeek V4.1 Flash', pv: 'DeepSeek', tip: '稳定 · 稍慢' }
   ];
-  // 默认模型（2026-10-21 调整）：3.6 → 3.8。
-  // 实测 13 次首轮断卦，gemini-3.6-flash 有 6 次断在句中（46%），gemini-3.8-flash
-  // 六次全部成篇。默认配置不该选那个「一半概率给半篇」的。
-  const DEFAULT_MODELS = ['gemini-3.8-flash', 'deepseek-flash'];
+  /* 默认模型（2026-11-12 再调整）：3.8 → deepseek。
+     10-21 那次把 3.6 换成 3.8 的理由是「3.8 六次全部成篇」；11-12 复测这个前提塌了：
+     同一盘面 3.8 只有 1/2（失败是 81s 首字节后来一个事件都没有，UPSTREAM_TIMEOUT）。
+     而 deepseek 在精简提示词下 9/9 全成篇（5 次 kun + 3 次 jiaren + 1 次留存抽检，
+     27–75s，1059–1552 字，全部带「结论：」「应期：」，零告警）。失败不是它的问题，
+     是那份 3004 字审计清单把它的思考预算烧光了——详见 functions/api/interpret.js M26。
+     默认配置该选「今天真能出稿」的那个，而不是「历史上曾经最好」的那个。 */
+  const DEFAULT_MODELS = ['deepseek-flash', 'gemini-3.8-flash'];
 
   // 已知模型的特性提示；后台自定义的模型名无提示
   const MODEL_TIPS = {
@@ -1028,7 +1032,7 @@
     // 比 10 月那批「停在 405 tokens」更短——「偶发断稿」这个说法已经过时了。
     'gemini-3.6-flash': '快 · 易早断',
     'gemini-3.8-flash': '高峰易过载',
-    'deepseek-flash': 'V4.1 · 1017',
+    'deepseek-flash': '稳定 · 稍慢',
     'gpt-6-luna': '便宜 · 快',
     'gpt-6-sol': '均衡',
     'gpt-6-astra': '最强 · 贵'
@@ -1084,12 +1088,12 @@
      对 deepseek 这种单模型供应商等于原地重跑，重试十次也是十次一样的空转。
      这里要的是「换一家能出正文的」。
 
-     2026-11-12 复测（同一盘面，8 次）：3.8 成功 1/2（失败是 82s 只发 1 个事件后
+     2026-11-12 复测（同一盘面）：3.8 成功 1/2（失败是 81s 只发 1 个事件后
      UPSTREAM_TIMEOUT）、3.6 成功 0/3（且断得极早：4.4s/10.1s/6.4s，220/411/566 字）、
-     deepseek 成功 1/3（失败是 1 万+ 事件全是思考、正文 0 字、78s 自然结束）。
+     deepseek 在精简提示词下 9/9 全成篇（M26 后复测，27–75s，1059–1552 字）。
      ——10-28 那条「3.6 一次 52s 完篇」已经不成立，把它摆在替补第一位等于把
-     确定性失败排在前面。现在的次序：3.8（质量最好）→ deepseek（有 1/3 能成篇，
-     且成篇时质量可用）→ 3.6（只作为最后的「有字总比没字强」）。 */
+     确定性失败排在前面。次序按「今天真能出正文」排：3.8 → deepseek → 3.6
+     （3.6 只作为最后的「有字总比没字强」）。传进来的若是 deepseek，会先跳到 3.8。 */
   const FALLBACK_ORDER = ['gemini-3.8-flash', 'deepseek-flash', 'gemini-3.6-flash'];
   function fallbackModelFor(m) {
     const usable = MODELS.filter(function (x) { return x.id !== m && x.configured !== false; });
@@ -2687,7 +2691,7 @@
       ]
     };
     try { localStorage.setItem('ly.vote.cast', JSON.stringify(spec)); } catch (e) { /* 隐私模式可能禁用，页面会退化为样例 */ }
-    window.open('/vote.html?v=20261112d', '_blank');
+    window.open('/vote.html?v=20261112e', '_blank');
   };
 
   // ---------- 卦例库口令登录 ----------

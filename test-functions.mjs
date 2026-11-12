@@ -1656,13 +1656,14 @@ await (await postModel('deepseek', 'deepseek-flash')).text();
 const dsBody = lastCall().body;
 // 8192 实测反而更糟（思考打满即 length，正文 0 字），改为给足 32768。
 eq('M24 deepseek 显式给足 max_tokens=32768（旧版完全不传、8192 实测更糟）', dsBody.max_tokens, 32768);
-/* M25：提示词按模型分两版。默认 full —— A/B 实测（真实盘面 + 服务端 diag 帧）两版
-   都能正常出正文（full 1862 字/37s，lean 1179 字/28s），精简版是「更快的可选项」，
-   不是「必需品」。旧结论「deepseek 只想不答」实为本机带宽假象，已作废。 */
-eq('M25 deepseek 默认走完整版（与 gemini 同一份契约）',
-  dsBody.messages[0].content.indexOf('【判语优先】') >= 0, true);
-eq('M25 默认不夹带精简版专属句（只输出断卦正文本身）',
-  dsBody.messages[0].content.indexOf('只输出断卦正文本身') < 0, true);
+/* M25：提示词按模型分两版。M26（2026-11-12）默认由 full 改为 lean ——
+   M25 写完精简版后默认仍是 full，这套定向方案一天都没在线上生效过。
+   2026-11-12 同盘 3 次实测：full 下 1 万+ 事件全是英文逐行 parse 盘面，正文 0 字、
+   78s 自然结束；lean 是唯一还没被线上验证过的方向，故切为默认。 */
+eq('M26 deepseek 默认走精简版（只输出断卦正文本身）',
+  dsBody.messages[0].content.indexOf('只输出断卦正文本身') >= 0, true);
+eq('M26 默认不含完整版的审计条款（【判语优先】须逐条核验那类）',
+  dsBody.messages[0].content.indexOf('【判语优先】') < 0, true);
 
 policyCalls.length = 0;
 await (await postModel('deepseek', 'deepseek-flash', { DEEPSEEK_PROMPT: 'lean' })).text();
