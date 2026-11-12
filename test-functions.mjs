@@ -1685,6 +1685,124 @@ eq('M25 gemini 不受影响，仍走完整版',
 eq('M25 导出的 SYSTEM_PROMPT 常量本身未被污染（app.js 副本契约不受影响）',
   SYSTEM_PROMPT.indexOf('只输出断卦正文本身') < 0, true);
 
+// ---------- #27 正文强制前缀 + 服务端原地重发（M27，2026-11-12）----------
+// 病灶（2026-11-12 线上实测）：deepseek 拿到完整版提示词时，预算全烧在「逐行 parse 盘面
+// + 复核 39 条不得」上，正文 0 字、78s 自然结束。M26 已把精简版切为默认；这里守最后一道：
+// 万一还是零正文，服务端自己带 prefix 再要一次——末条 assistant + `prefix: true`，
+// 且打 /beta（DeepSeek 官方 Beta 路径）。
+{
+  const calls = [];
+  let round = 0;
+  const origF = globalThis.fetch;
+  const sseOf = function (rows) {
+    const enc = new TextEncoder();
+    return new Response(new ReadableStream({
+      start(c) {
+        rows.forEach(function (r) { c.enqueue(enc.encode('data: ' + JSON.stringify(r) + '\n')); });
+        c.enqueue(enc.encode('data: [DONE]\n'));
+        c.close();
+      }
+    }), { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+  globalThis.fetch = function (url, opt) {
+    const body = opt && opt.body ? JSON.parse(opt.body) : null;
+    calls.push({ url: String(url), body: body });
+    round++;
+    if (round === 1) {
+      // 首轮形状：只有英文逐行 parse 盘面的思考，正文一个字节都没有
+      return Promise.resolve(sseOf([
+        { choices: [{ delta: { reasoning_content: 'Let me parse the chart line by line...' } }] },
+        { choices: [{ delta: { reasoning_content: ' ... checking every contract clause ...' }, finish_reason: 'stop' }] }
+      ]));
+    }
+    return Promise.resolve(sseOf([
+      { choices: [{ delta: { reasoning_content: '第二轮仍在想' } }] },
+      // 真实形状：带前缀时模型从「一、卦象要点」之后接着写，不会再把标题重复一遍
+      { choices: [{ delta: { content: '坤为地，坤宫土，六冲卦。\n结论：平\n' } }] }
+    ]));
+  };
+  const res = await postModel('deepseek', 'deepseek-flash');
+  const evs = await readSSEEvents(res);
+  eq('M27 首轮零正文 → 服务端自动重发一次', calls.length, 2);
+  eq('M27 重发打到 /beta（prefix completion 官方路径）', calls[1].url.indexOf('/beta/') > 0, true);
+  const lastMsg = calls[1].body.messages[calls[1].body.messages.length - 1];
+  eq('M27 末条为 assistant 前缀', [lastMsg.role, lastMsg.prefix, lastMsg.content.trim()], ['assistant', true, '一、卦象要点']);
+  eq('M27 前缀不是另加一条 user 消息（那等于换个说法重问）',
+    calls[1].body.messages.filter(function (m) { return m.role === 'assistant'; }).length, 1);
+  eq('M27 客户端拿到第二轮正文', sseText(evs).indexOf('结论：平') >= 0, true);
+  /* 前缀是**输入**，上游回包里不会有它。服务端要自己补一帧，否则正文首行小标题
+     凭空消失（实测 first 模式三篇稿全部从「坤为地，坤宫土…」起头）。 */
+  eq('M27 补回前缀标题（否则首行小标题丢失）',
+    (evs.filter(function (e) { return typeof e.t === 'string'; })[0] || {}).t, '一、卦象要点\n');
+  eq('M27 标题只出现一次（不能既补一次又让模型重复一次）',
+    sseText(evs).split('一、卦象要点').length - 1, 1);
+  eq('M27 第一轮思考帧照常下发（用户要知道它在想）',
+    evs.some(function (e) { return typeof e.r === 'string' && e.r.indexOf('Let me parse') >= 0; }), true);
+  eq('M27 第二轮思考帧不再下发（否则计数翻倍、却仍无正文）',
+    evs.some(function (e) { return typeof e.r === 'string' && e.r.indexOf('第二轮仍在想') >= 0; }), false);
+  eq('M27 重发成功 → 不误报 DRAFT_ONLY',
+    evs.some(function (e) { return e.warn === 'DRAFT_ONLY'; }), false);
+
+  // 中转站只代理 /v1：/beta 404 → 退回普通重发（不带前缀），仍有正文
+  calls.length = 0; round = 0;
+  globalThis.fetch = function (url, opt) {
+    const body = opt && opt.body ? JSON.parse(opt.body) : null;
+    calls.push({ url: String(url), body: body });
+    round++;
+    if (round === 1) return Promise.resolve(sseOf([
+      { choices: [{ delta: { reasoning_content: '只想不说' }, finish_reason: 'stop' }] }
+    ]));
+    if (round === 2) return Promise.resolve(new Response('{"error":"not found"}', { status: 404 }));
+    return Promise.resolve(sseOf([
+      { choices: [{ delta: { content: '结论：凶\n' } }, { finish_reason: 'stop' }] }
+    ]));
+  };
+  const res2 = await postModel('deepseek', 'deepseek-flash');
+  const evs2 = await readSSEEvents(res2);
+  eq('M27 prefix 被拒(404) → 退回普通重发', calls.length, 3);
+  eq('M27 退回复发不带 beta 路径', calls[2].url.indexOf('/beta/'), -1);
+  eq('M27 退回复发不带 prefix 字段',
+    calls[2].body.messages[calls[2].body.messages.length - 1].prefix, undefined);
+  eq('M27 退回后仍拿到正文', sseText(evs2).indexOf('结论：凶') >= 0, true);
+
+  // 开关：一次多打 30~70s，成本与延迟都要能一键关掉
+  calls.length = 0; round = 0;
+  const r3 = await postModel('deepseek', 'deepseek-flash', { DEEPSEEK_RETRY: '0' });
+  await readSSEEvents(r3);
+  eq('M27 DEEPSEEK_RETRY=0 → 不重发（只打一次）', calls.length, 1);
+
+  // 反向对照：已有正文的流不得触发重发（否则每次多花一次调用）
+  calls.length = 0; round = 0;
+  globalThis.fetch = function (url, opt) {
+    calls.push({ url: String(url), body: opt && opt.body ? JSON.parse(opt.body) : null });
+    return Promise.resolve(sseOf([{ choices: [{ delta: { content: '结论：吉\n' } }, { finish_reason: 'stop' }] }]));
+  };
+  await readSSEEvents(await postModel('deepseek', 'deepseek-flash'));
+  eq('M27 正常出稿不触发重发', calls.length, 1);
+
+  /* PREFIX_MODE=first：首次请求就带前缀。线上实测这一项等于**关掉思考**
+     （同题面：普通请求 reasoning_tokens=254，带前缀 reasoning_tokens=0），
+     所以它既是「至少能出正文」的保底，也是一条独立的降延迟通道。 */
+  calls.length = 0; round = 0;
+  await readSSEEvents(await postModel('deepseek', 'deepseek-flash', { DEEPSEEK_PREFIX: 'first' }));
+  const firstMsg = calls[0].body.messages[calls[0].body.messages.length - 1];
+  eq('M27 PREFIX_MODE=first → 首次请求即带 prefix', [firstMsg.role, firstMsg.prefix], ['assistant', true]);
+  eq('M27 first 模式不再重发（同一参数重发没有意义）', calls.length, 1);
+
+  // off：一键关掉重发（含 prefix 通道），用于对照与排障
+  calls.length = 0; round = 0;
+  globalThis.fetch = function (url, opt) {
+    calls.push({ url: String(url), body: opt && opt.body ? JSON.parse(opt.body) : null });
+    round++;
+    return Promise.resolve(sseOf([
+      { choices: [{ delta: { reasoning_content: '只有思考' }, finish_reason: 'stop' }] }
+    ]));
+  };
+  await readSSEEvents(await postModel('deepseek', 'deepseek-flash', { DEEPSEEK_PREFIX: 'off' }));
+  eq('M27 PREFIX_MODE=off → 零正文也不重发', calls.length, 1);
+  globalThis.fetch = origF;
+}
+
 policyCalls.length = 0;
 await (await postModel('gemini', 'gemini-3.6-flash', { GEMINI_THINKING_BUDGET: '-1' })).text();
 eq('M24 GEMINI_THINKING_BUDGET=-1 → 不传 thinkingConfig（动态思考，供再实验）',

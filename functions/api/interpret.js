@@ -541,7 +541,22 @@ export async function onRequestPost(context) {
 
   // 按模型组装一次上游调用（Google 原生 SSE；其余 OpenAI 兼容流式）。
   // 抽成函数是为了「跨模型降级」：备选模型要用同一套参数构造规则再发一次。
-  function buildCall(modelId) {
+  /* 正文强制前缀（2026-11-12，M27）。
+     DeepSeek 的 chat prefix completion（官方 Beta）：末条 message 为 assistant 且带
+     `prefix: true`，且 base_url 必须走 `/beta`。作用是把「先想再说」改成「先说」——
+     模型从这句话之后接着写，正文的第一句由我们指定，它就没有「再复述一遍盘面」的入口。
+     只在「首轮零正文、只有思考」时作为补救手段，不用于正常路径：前缀会小幅影响
+     首段措辞，而正常路径已经能出稿，没必要动。
+     前缀取实测最常见的第一句（probe 9 份稿里 6 份以「一、卦象要点」起），
+     不写成「一、列卦象要点」是因为 lean 版提示词本身有两种写法，取更短的那个更安全。 */
+  const PREFIX_SEED = '一、卦象要点\n';
+
+  function buildCall(modelId, opts) {
+    // prefix 只对 OpenAI 兼容路径成立；Google 原生接口没有这个字段，忽略即可
+    const wantPrefix = !!(opts && opts.prefix) && !isGoogle;
+    const outMessages = wantPrefix
+      ? messages.concat([{ role: 'assistant', content: PREFIX_SEED, prefix: true }])
+      : messages;
     if (isGoogle) {
       const contents = messages.filter(function (m) { return m.role !== 'system'; }).map(function (m) {
         return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] };
@@ -580,7 +595,7 @@ export async function onRequestPost(context) {
       };
     }
     // 统一走流式（服务端拼接完整文本后返回），避免中转站网关的 60s 整响应硬超时
-    const payload = { model: modelId, messages: messages, stream: true };
+    const payload = { model: modelId, messages: outMessages, stream: true };
     // 正文预算：全局 LLM_MAX_TOKENS 优先，其次按模型的 policy（deepseek 默认 8192）。
     const oaMax = maxTokens > 0 ? maxTokens : (policy.maxTokens || 0);
     if (oaMax > 0) payload.max_tokens = oaMax;
@@ -595,8 +610,13 @@ export async function onRequestPost(context) {
       { 'Authorization': 'Bearer ' + cfg.key, 'Content-Type': 'application/json' },
       gatewayHeaders(cfg.base)
     );
+    /* prefix completion 必须打到 /beta。自定义中转通常只代理 /v1，那里没有 beta 路径，
+       会 404 —— 调用方收到 4xx 会退回普通重发（见 pipeUpstreamSSE 的 retryStream），
+       所以这里只管按官方约定拼，不做「这家支不支持」的猜测。 */
+    let base = cfg.base;
+    if (wantPrefix) base = base.replace(/\/v1$/, '/beta');
     return {
-      url: cfg.base + '/chat/completions',
+      url: base + '/chat/completions',
       headers: headers,
       payload: payload
     };
@@ -689,8 +709,26 @@ export async function onRequestPost(context) {
   // 单次上游尝试。成功 → { reply, cut }；失败 → { fail: { status, detail, retryable } }。
   // retryable=false 表示 4xx 客户端错误（模型名非法/请求体错误等），换模型重试无意义；
   // 429/5xx 与网络错误视为可恢复，允许跨模型降级。
+  /* 正文强制前缀的两种用法（2026-11-12 实测后加，M27）：
+     · retry（默认）：正常路径不带前缀（允许模型思考，质量优先），只在首轮零正文时
+       带前缀重发一次；
+     · first：首次就带前缀。**关键是它把思考关掉了**——线上实测同一题面，
+       普通请求 reasoning_tokens=254、content 185 字；带前缀 reasoning_tokens=0、
+       content 176 字，模型从「一、卦象要点」直接往下写。这是「只想不说」的
+       API 层解药，不是靠提示词劝；
+     · off：完全不用（保留出口，便于回退）。
+     first 会漏「前提完整性」这一行（实测三篇全漏）：没有思考时它把结尾五行压成四行，
+     所以默认仍走 retry —— 先保住结构，再谈速度。
+     另：first 只在官方域名下放开。自定义中转只代理 /v1，/beta 是 404，而 first 模式
+     本身不做重发，首次即死；这种情况下自动退回 retry 语义（首次不带前缀）。 */
+  const PREFIX_MODE = String(env.DEEPSEEK_PREFIX || 'retry').toLowerCase();
+  const PREFIX_HOST_OK = (function () {
+    try { return /(^|\.)api\.deepseek\.com$/i.test(new URL(cfg.base).host); } catch (e) { return false; }
+  })();
+  const USE_PREFIX_FIRST = provider === 'deepseek' && PREFIX_MODE === 'first' && PREFIX_HOST_OK;
+
   async function attempt(modelId) {
-    const call = buildCall(modelId);
+    const call = buildCall(modelId, { prefix: USE_PREFIX_FIRST });
     let resp;
     try {
       resp = await fetch(call.url, {
@@ -830,10 +868,17 @@ export async function onRequestPost(context) {
   //   ① 思考草稿以 {"r":"…"} **实时**下发（前端只作进度显示，绝不进正文，
   //      原因见上方 deltaText 注释里的 6 处 fact-audit 假阳性）；
   //   ② 跑完整条流仍一个字都没有时，显式下发 {"error":"EMPTY_UPSTREAM"}。
-  async function pipeUpstreamSSE(upstream, w, enc, diag) {
+  async function pipeUpstreamSSE(upstream, w, enc, diag, opts) {
     const reader = upstream.body.getReader();
     const dec = new TextDecoder();
     let buf = '', outLen = 0, cut = null, reasBuf = '';
+    /* 重发轮（opts.retried）只用于「首轮零正文」的补救，两处行为要跟着变：
+       · suppressR：不再把思考片段下发给客户端。第一轮已经推过一遍「已输出 N 字」，
+         第二轮再推会让用户看到计数翻倍、却始终没有正文；
+       · 不再重发（递归只有一层），避免两个模型都只会思考时把请求拖到超时。 */
+    const isRetry = !!(opts && opts.retried);
+    const suppressR = !!(opts && opts.silentR);
+    let retried = isRetry;
     // 本次回答是否只是「思考草稿兜底补发」的产物（正文其实一个字节都没来）。
     // 置位后要额外下发 DRAFT_ONLY 告警，前端据此提示并走残篇补发，别把草稿当断语。
     let draftOnly = false;
@@ -845,6 +890,16 @@ export async function onRequestPost(context) {
     let finish = null;
     // 文末快照：用于判定「结构化结论」是否齐全（结论四行必在文末）。
     let tail = '';
+    /* 带前缀的请求，客户端看不到前缀本身（它是输入，不在回包里），正文会直接从
+       「坤为地，坤宫土…」开始，首行小标题凭空消失（实测 first 模式三篇全缺）。
+       这里把前缀补成一帧正文：既补回标题，也让首字节立刻到达。 */
+    if (opts && opts.seeded && !diag) {
+      outLen += PREFIX_SEED.length;
+      tail = PREFIX_SEED;
+      try {
+        await w.write(enc.encode('data: ' + JSON.stringify({ t: PREFIX_SEED }) + '\n\n'));
+      } catch (e) { /* 客户端已断开则忽略 */ }
+    }
     const writeErr = async function (code, msg) {
       try {
         await w.write(enc.encode('data: ' + JSON.stringify({ error: code, message: msg }) + '\n\n'));
@@ -880,6 +935,61 @@ export async function onRequestPost(context) {
       // cancel() 让挂起的 read() 立即返回，循环自然退出（不抛错，避免与超时分支混淆）
       try { reader.cancel().catch(function () { /* 已释放则忽略 */ }); } catch (e) { /* 已释放 */ }
     }, stallTickMs);
+    /* 原地重发：拿一条新的上游流（带正文强制前缀），不新建客户端会话、不重发头部。
+       DeepSeek 的 prefix completion 在 `/beta` 下，自定义中转多半只代理 `/v1`，
+       所以 4xx 时退回「普通重发」（不带前缀、只把 lean 提示词再说一遍的机会）。
+       两级都失败就返回 null，调用方照原样走 DRAFT_ONLY / EMPTY_UPSTREAM。 */
+    async function retryStream() {
+      const post = function (call) {
+        return fetch(call.url, {
+          method: 'POST',
+          headers: call.headers,
+          body: JSON.stringify(call.payload),
+          signal: ctrl.signal
+        });
+      };
+      try {
+        let seeded = true;
+        let resp = await post(buildCall(model, { prefix: true }));
+        if (!resp.ok && resp.status >= 400 && resp.status < 500) {
+          try { await readCapped(resp, 500); } catch (e) { /* 错误体丢弃 */ }
+          console.warn('[liuyao] prefix 重发被拒（' + resp.status + '），退回普通重发');
+          seeded = false;
+          resp = await post(buildCall(model));
+        }
+        if (!resp.ok) {
+          let head = '';
+          try { head = await readCapped(resp, 500); } catch (e) { /* 读失败忽略 */ }
+          console.error('[liuyao] 原地重发失败 ' + resp.status + ':', head.slice(0, 200));
+          return null;
+        }
+        const ct = (resp.headers.get('content-type') || '').toLowerCase();
+        if (ct.indexOf('text/event-stream') !== -1) return { resp: resp, seeded: seeded };
+        /* 上游忽略 stream、回了整段 JSON：合成一条 SSE 喂回同一条消费路径，
+           避免为「重发」再写一套非流式解析（那正是两套口径漂移的来源）。 */
+        const raw = await readCapped(resp, SSE_MAX_REPLY + 1024);
+        let data = null;
+        try { data = JSON.parse(raw); } catch (e) { /* 解析失败按失败处理 */ }
+        const ch = data && data.choices && data.choices[0];
+        const body = ch && ch.message ? (ch.message.content || '') : '';
+        if (!body) { console.error('[liuyao] 重发返回无正文'); return null; }
+        const e2 = new TextEncoder();
+        return {
+          resp: new Response(new ReadableStream({
+            start: function (c) {
+              c.enqueue(e2.encode('data: ' + JSON.stringify({
+                choices: [{ delta: { content: body }, finish_reason: 'stop' }]
+              }) + '\n\n'));
+              c.close();
+            }
+          }), { status: 200, headers: { 'content-type': 'text/event-stream' } }),
+          seeded: seeded
+        };
+      } catch (e) {
+        console.error('[liuyao] 原地重发异常:', e && e.message);
+        return null;
+      }
+    }
     try {
       while (true) {
         const r = await reader.read();
@@ -923,7 +1033,7 @@ export async function onRequestPost(context) {
                   // 实时下发思考进度（独立字段 r）：既让用户在 60~90s 的思考期看到
                   // 「还在动」，也让这条 TCP 流持续有帧，不会因长时间静默被中间层掐断。
                   try {
-                    if (!diag) await w.write(enc.encode('data: ' + JSON.stringify({ r: rc }) + '\n\n'));
+                    if (!diag && !suppressR) await w.write(enc.encode('data: ' + JSON.stringify({ r: rc }) + '\n\n'));
                   } catch (e) { /* 客户端已断开则忽略 */ }
                 }
               }
@@ -947,7 +1057,7 @@ export async function onRequestPost(context) {
                     thoughtLen += p.text.length;
                     if (p.text) {
                       try {
-                        if (!diag) await w.write(enc.encode('data: ' + JSON.stringify({ r: p.text }) + '\n\n'));
+                        if (!diag && !suppressR) await w.write(enc.encode('data: ' + JSON.stringify({ r: p.text }) + '\n\n'));
                       } catch (e) { /* 客户端已断开则忽略 */ }
                     }
                     continue;
@@ -972,6 +1082,29 @@ export async function onRequestPost(context) {
           }
         }
         if (cut) break;
+      }
+      /* 服务端原地重发（M27，2026-11-12）。
+         触发面窄到只有一种：**首轮正文一个字都没来**（outLen === 0）。理由：
+         · 只要出过字就不重发——两段正文拼在一起，用户看到的是重复开头的脏稿；
+         · 只对 deepseek 开：gemini 的失败形态是「静默/早断」，前缀救不了；
+         · 上游挂死（stalled）也重发：那正是「思考 4KB 后彻底静默」的形状，
+           而 ctrl 尚未 abort（看门狗只 cancel 了 reader），重发是安全的。
+         重发成功后递归进同一个 writer 继续写，客户端只看到「思考了一段，然后正文来了」。 */
+      if (!cut && !clientGone && !timedOut && !firstByteTimedOut && !diag && !retried &&
+          outLen === 0 && provider === 'deepseek' && PREFIX_MODE !== 'off' && !USE_PREFIX_FIRST &&
+          String(env.DEEPSEEK_RETRY || '1') !== '0') {
+        const next = await retryStream();
+        if (next) {
+          retried = true;
+          try { reader.cancel().catch(function () { /* 已消费完则忽略 */ }); } catch (e) { /* 已释放 */ }
+          console.log(JSON.stringify({
+            ev: 'retry_prefix', thought: thoughtLen, finish: finish === null ? null : String(finish),
+            stalled: stalled, ms: Date.now() - startedAt
+          }));
+          // 递归只走一层（opts.retried 已在入口置位，条件里的 !retried 也会拦住）
+          await pipeUpstreamSSE(next.resp, w, enc, diag, { retried: true, silentR: true, seeded: next.seeded });
+          return;
+        }
       }
       // 被看门狗打断：显式告知，且**不要**再走下面「草稿兜底补发」——上游没写完，
       // 把半截草稿当答复发下去只会让前端多猜一次。
@@ -1060,6 +1193,7 @@ export async function onRequestPost(context) {
           cut: cut || null,
           empty: outLen === 0,
           draft: draftOnly,
+          retry: retried,
           first: history.length === 0,
           ms: Date.now() - startedAt
         }));
@@ -1131,7 +1265,7 @@ export async function onRequestPost(context) {
           }
           await frame({ error: 'LLM_ERROR', message: '大模型接口返回 ' + r.fail.status + '，请稍后重试' }); return;
         }
-        if (r.stream) { await pipeUpstreamSSE(r.stream, w, enc, diag); return; }
+        if (r.stream) { await pipeUpstreamSSE(r.stream, w, enc, diag, { seeded: USE_PREFIX_FIRST }); return; }
         if (!r.reply) { await frame({ error: 'EMPTY_UPSTREAM', message: '大模型返回为空' }); return; }
         // 上游忽略了 stream 参数、直接回整段 JSON：同样以 SSE 下发（头已经发出，回不了 JSON）
         await frame({ t: r.reply });
@@ -1221,7 +1355,7 @@ export async function onRequestPost(context) {
       // 混在一个分支里，才有「心跳挂在已释放 writer 上」那类只在生产才暴露的失效。
       timerHandedOff = true;
       const session = openSession();
-      pipeUpstreamSSE(r.stream, session.writer, session.enc, diag)
+      pipeUpstreamSSE(r.stream, session.writer, session.enc, diag, { seeded: USE_PREFIX_FIRST })
         .catch(function () { /* 错误已在 pipeUpstreamSSE 内处理并写终止事件 */ })
         .then(session.finish, session.finish);
       return session.response;

@@ -1226,3 +1226,60 @@ reasoning 模型的思考预算被这些条款吃光，正文自然一个字不�
 
 **测试**：`npm test` 全绿（93/303/213/89/78/72/182/20/18/12），`test:fn` 403 项 exit 0。
 **部署**：资源戳 `?v=20261112e`。
+---
+
+## 第四十轮 · 正文强制前缀 + 服务端原地重发（2026-11-12）
+
+**背景**：上一轮把精简提示词切为默认后，deepseek 从 1/3 变成 9/9。但那是「劝」出来的——
+提示词少写点复核要求，它就不烧预算。这一轮找的是**机制层**的解：让它根本没有「先想再说」
+的机会。
+
+### 一、实测：prefix completion 等于关思考
+
+先确认线上通道支持。临时诊断端点（已删）打同一题面，仅差一个前缀：
+
+| 请求 | reasoning_tokens | content | 说明 |
+|---|---|---|---|
+| 普通 `/v1/chat/completions` | **254** | 185 字 | 先写 327 字英文草稿，再写正文 |
+| `/beta` + 末条 assistant `prefix:true` | **0** | 176 字 | 无思考，直接从「一、卦象要点」往下写 |
+
+即 DeepSeek 的 chat prefix completion 不只是「指定开头」——它对推理模型是**关掉思考**
+（reasoning_tokens=0）。这是「只想不说」的 API 层解药，不是提示词能劝出来的。
+
+线上整链路验证（`DEEPSEEK_PREFIX=first` 临时档，同一盘面 3 次）：
+
+```
+9.3s / 9.5s / 10.3s，951–1191 字，全部带「结论：」「应期：」，零告警
+（同盘普通 lean 模式：27–75s）
+```
+
+### 二、两个机制（`functions/api/interpret.js`）
+
+1. **正文强制前缀**（`buildCall(modelId, {prefix})`）：末条 message 为
+   `{role:'assistant', content:'一、卦象要点\n', prefix:true}`，base 的 `/v1` 换成 `/beta`。
+   前缀是**输入**，回包里没有它，所以服务端补一帧 `{t: PREFIX_SEED}` ——
+   否则正文明明出了，首行小标题却凭空消失（实测 first 模式三篇全缺）。
+2. **服务端原地重发**（`pipeUpstreamSSE` 内 `retryStream`）：首轮**正文一个字节都没有**
+   时，带前缀重发一次，成功则递归进同一个 writer 继续写。边界收得很紧：
+   - 只对 `provider === 'deepseek'`；
+   - 只在 `outLen === 0` 时（出过字绝不重发，否则两段正文拼成脏稿）；
+   - 只一层（`opts.retried` 挡住递归）；
+   - 上游挂死（stalled）也重发——那正是「思考 4KB 后静默」的形状，`ctrl` 未 abort；
+   - 前缀路径 4xx（中转只代理 `/v1` → 404）自动退回**普通重发**；
+   - `DEEPSEEK_RETRY=0` 一键关。
+
+### 三、为什么默认仍是 retry，不是 first
+
+first 更快（14s vs 27s）且能关思考，但**会漏结构行**：三次实测有三篇缺「前提完整性」，
+而无思考时它把结尾五行压成四行。前端 `parseConclusion` 靠那行显示前提状态，漏了等于
+契约破了一角。所以默认 retry（正常路径允许思考、质量优先），first 留作环境变量档，
+并加域名门槛：只有在 `api.deepseek.com` 下才允许 first（中转没有 `/beta`，first 又不重发，
+首次即死）。
+
+**测试**：`test-functions` 403 → **422**（首轮零正文自动重发／打 `/beta`／末条 assistant
+带 prefix／补回前缀帧且只出现一次／404 退回普通重发／`DEEPSEEK_RETRY=0` 不重发／
+正常出稿不重发／`DEEPSEEK_PREFIX=first` 首次即带前缀且不重发／`off` 完全不重发）。
+`npm test` 全绿（93/303/213/89/78/72/182/20/18/12）。
+
+**线上**：生产 `7c22d6cd`（retry 档），deepseek 复测 2/2（27s/29s，1026–1372 字）；
+临时诊断端点部署后即删（`/api/prefixprobe` 现回落首页 200）。

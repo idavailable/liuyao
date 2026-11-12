@@ -33,7 +33,7 @@
 - **暗动闭环**：静爻被日冲，先查月令旺衰（旺相=暗动，休囚=日破）——修复旧版「文字说了一套、代码没做」
 - **规则覆盖**：月建档（旺相休囚死）、真假月破、日辰生克拱扶、冲散/暗动/日破、合起合绊、静空/动空/真空（**真空以「安静」为前提，动爻永不真空**）、回头生克冲合、进神退神、三合局、相刑相害、飞伏生克、用神两现取舍、伏神引拔、伏神伏世下（不误报用神持世）；**M16 新增三族**：卦型（六冲/六合/游魂/归魂及相变五型，只陈述不入 trend）、生旺墓绝（长生十二宫四正位 + 觉子曰三宽：烈火煎金/论生不论墓/论生不论绝）、元神/忌神/仇神（三神识别、有力无力、贪生忘克）
 - **上层契约层（M15，M21 增 premise 一层）**：`sensitive.js` / `domain-methods.js` / `fact-audit.js` / `coverage-audit.js` / `premise.js` 五个**不参与排盘**的模块——分别负责「敏感问题确定性分流」「所测之事的分析方法与误判清单注入」「断语与卦盘的事实一致性审计」「断语推理一致性审查」。详见下节；自检见 `test-absorb.js`（213 项）
-- **质量保障**：`test-core.js` 93 项基础自检（含入参校验、非法日期文案、`bian` 语义契约锁定、`__wall` 墙上时间锚点） + `test-rules.js` 297 项规则链单测（含直测 `ruleXingHai` 的三刑全覆盖、M16 三族卦型/生旺墓绝/三神的正反用例） + `test-premise.js` 156 项前提层自检（五类槽位分级、应期同域双向、包合并、撤回/追问） + `test-gua-types.js` 卦型判定回归（64 卦全枚举 + 京房八宫卦次整表 + 10 类变异自检） + `test-functions.mjs` 403 项 Functions 层（另有 test-db 11 项真实 SQLite 集成）（含上游超时、流式缓冲守卫、限流窗口有界、结果回执白名单与回填端点、分页/请求体闸门/口令爆破限速、两份提示词全文一致） + `test-shake.js` 82 断言 UI 冒烟 + `test-diff.mjs` 三库交叉差分（10 万+字段）+ `tests/guji` 古籍卦例回归（《增删卜易》《卜筮正宗》404 条卦例 + 68 条断语用例 / 12148 断言，断卦规则覆盖 65/79，另附 43 类变异自检）+ `tests/verify` 外部验证集三方对账与零依赖金标准回归；CI 另有「部署隔离断言」守住 `public/` 边界
+- **质量保障**：`test-core.js` 93 项基础自检（含入参校验、非法日期文案、`bian` 语义契约锁定、`__wall` 墙上时间锚点） + `test-rules.js` 297 项规则链单测（含直测 `ruleXingHai` 的三刑全覆盖、M16 三族卦型/生旺墓绝/三神的正反用例） + `test-premise.js` 156 项前提层自检（五类槽位分级、应期同域双向、包合并、撤回/追问） + `test-gua-types.js` 卦型判定回归（64 卦全枚举 + 京房八宫卦次整表 + 10 类变异自检） + `test-functions.mjs` 422 项 Functions 层（另有 test-db 11 项真实 SQLite 集成）（含上游超时、流式缓冲守卫、限流窗口有界、结果回执白名单与回填端点、分页/请求体闸门/口令爆破限速、两份提示词全文一致） + `test-shake.js` 82 断言 UI 冒烟 + `test-diff.mjs` 三库交叉差分（10 万+字段）+ `tests/guji` 古籍卦例回归（《增删卜易》《卜筮正宗》404 条卦例 + 68 条断语用例 / 12148 断言，断卦规则覆盖 65/79，另附 43 类变异自检）+ `tests/verify` 外部验证集三方对账与零依赖金标准回归；CI 另有「部署隔离断言」守住 `public/` 边界
 
 ### 三库交叉差分（test-diff.mjs，devDependencies 不进生产）
 
@@ -347,7 +347,7 @@ CF AI Gateway 的缓存键 = provider + endpoint + model + 鉴权头 + **整个�
 npm install                       # 安装测试裁判库（devDependencies）
 npx wrangler pages dev public     # 本地起 Pages（部署根为 public/，需先在 wrangler.toml 绑定 D1）
 npm test                          # 快速环：基础自检 93 + 规则链 297 + 卦型判定 91 + 上层契约（test-absorb）213 + 用神推断（test-yongshen）89 + 前提层（test-premise）156 + 应期窗口 78 + 分享链接 72 + 判据快照 20 + 对账页 18 + 古卦清单 12（均无需裁判库）
-npm run test:fn                   # Functions 层单测 403 项 + test-db 11 项真实 SQLite 集成（jsonWithin 合法性/常量时间口令/模型名白名单/去重与读鉴权/结果回执与分桶/gemini 跨模型降级/三模型对账依据层）
+npm run test:fn                   # Functions 层单测 422 项 + test-db 11 项真实 SQLite 集成（jsonWithin 合法性/常量时间口令/模型名白名单/去重与读鉴权/结果回执与分桶/gemini 跨模型降级/三模型对账依据层）
 npm run test:paipan               # 排盘金标准回归 173 项（零依赖，只加载 core.js）
 npm run test:ui                   # UI 冒烟 82 断言（Playwright + Edge 通道，需先起本地静态服务）
 npm run test:prod -- <站点URL>     # 线上冒烟 25 断言（真实浏览器打通「起卦→应期→分享还原→重新起卦」，真域名下并检接口鉴权）
