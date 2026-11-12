@@ -112,7 +112,7 @@
    * @param {object} analysis  analyze() 的输出（judgments / yongshen / trend / yjs）
    * @returns {object} 见 emptyOut()；另附 {status:'blocked', blockedBy, text, ...}
    */
-  function yingqiWindow(pan, analysis) {
+  function yingqiWindow(pan, analysis, opts) {
     const out = emptyOut();
 
     if (!pan || !pan.pillars || !pan.lines) {
@@ -261,8 +261,12 @@
 
     cands.sort(function (a, b) { return a.d - b.d; });
     const main = cands[0];
-    const lo = Math.max(1, main.d);
-    const hi = lo + main.spread;
+    // 固定日（2026-11-12）：占天时问「明日」，应期即明日——题面已给定是哪一天，
+    // 没有换算余地，不能被「用神值日」推到第 6 日。此时窗口只是**备选节点**
+    // （雨气再聚之期），主应期落在所问之日。
+    const pin = (opts && typeof opts.fixedDay === 'number' && opts.fixedDay >= 0) ? opts.fixedDay : null;
+    const lo = pin !== null ? pin : Math.max(1, main.d);
+    const hi = pin !== null ? pin : lo + main.spread;
 
     // ---------- ③ 置信度：盘面要素的自洽程度，不是命中概率 ----------
     let consistency = 1; // 基准：中
@@ -308,7 +312,7 @@
     out.confidence = consistency >= 3 ? '高' : (consistency === 2 ? '中' : '低');
     out.lo = lo;
     out.hi = hi;
-    out.spread = main.spread;
+    out.spread = pin !== null ? 0 : main.spread;
     out.dayLo = gzOfDayIdx(dayIdx + lo);
     out.dayHi = gzOfDayIdx(dayIdx + hi);
 
@@ -318,14 +322,31 @@
       out.dateHi = fmtMD(addDays(dt, hi));
     }
 
-    out.text = '应期：' + out.dayLo + '日前后（第 ' + lo + '–' + hi + ' 日' +
-      (out.dateLo ? '，' + out.dateLo + '—' + out.dateHi : '') +
-      '），置信' + CONF_LABEL[out.confidence];
+    if (pin !== null) {
+      // 「今日／明日／后日」由调用方给出（题面的那个词），此处只负责换算干支与公历
+      const label = pin === 0 ? '今日' : (pin === 1 ? '明日' : '后日');
+      out.pinnedDay = label;
+      out.text = '应期：' + label + '（' + out.dayLo + '日' +
+        (out.dateLo ? '，' + out.dateLo : '') + '），置信' + CONF_LABEL[out.confidence];
+    } else {
+      out.text = '应期：' + out.dayLo + '日前后（第 ' + lo + '–' + hi + ' 日' +
+        (out.dateLo ? '，' + out.dateLo + '—' + out.dateHi : '') +
+        '），置信' + CONF_LABEL[out.confidence];
+    }
 
-    out.basis.push(main.why);
-    cands.slice(1).forEach(function (c) {
-      out.basis.push('辅助节点（第 ' + Math.max(1, c.d) + ' 日）：' + c.why);
-    });
+    if (pin !== null) {
+      out.basis.push('所占之事为' + (opts.hit ? '「' + opts.hit + '」' : '某一确定之日') +
+        '：占天时以日为刻度，应期即以该日为准，不沿用「用神值日」换算出的日级窗口');
+      out.basis.push('备选节点（雨气再聚之期，非所问之日）：' + main.why);
+      cands.slice(1).forEach(function (c) {
+        out.basis.push('辅助节点（第 ' + Math.max(1, c.d) + ' 日）：' + c.why);
+      });
+    } else {
+      out.basis.push(main.why);
+      cands.slice(1).forEach(function (c) {
+        out.basis.push('辅助节点（第 ' + Math.max(1, c.d) + ' 日）：' + c.why);
+      });
+    }
     if (!downgrades.length) downgrades.push('无明显削弱项（月建与元神无碍）');
 
     return out;

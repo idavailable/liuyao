@@ -761,13 +761,17 @@
     // 借来标置信会被读成吉凶（高置信≠吉）。此处只用中性徽标 + 明确措辞。
     const badge = '<span class="oc-badge" title="盘面要素的自洽程度，不是命中概率">置信' +
       esc(w.confidence === '中' ? '中等' : w.confidence) + '</span>';
-    box.innerHTML = '<b>应期窗口</b>　' + esc(w.text.replace(/^应期：/, '')) + '　' + badge +
+    // 固定日（占天时问「明日」）不是区间，不套「窗口」标题与换算说明——
+    // 否则「明日（辛卯日，11月13日）」被写在「应期窗口」下，读者会以为还有一段区间。
+    box.innerHTML = '<b>' + (w.pinnedDay ? '应期' : '应期窗口') + '</b>　' + esc(w.text.replace(/^应期：/, '')) + '　' + badge +
       (w.basis && w.basis.length
         ? '<div class="muted" style="margin-top:6px">依据：' + esc(w.basis.join('；')) + '</div>' : '') +
       (w.downgrades && w.downgrades.length
         ? '<div class="muted" style="margin-top:4px">下调原因：' + esc(w.downgrades.join('；')) + '</div>' : '') +
-      '<div class="muted" style="margin-top:4px;font-size:12px">区间由出空／冲空／值日／出月／逢冲等盘面要素换算；' +
-      '置信度只表示要素之间的自洽程度，不是命中概率。</div>';
+      '<div class="muted" style="margin-top:4px;font-size:12px">' + (w.pinnedDay
+        ? '题面已指明哪一日，应期即以该日为准；置信度只表示要素之间的自洽程度，不是命中概率。'
+        : '区间由出空／冲空／值日／出月／逢冲等盘面要素换算；' +
+          '置信度只表示要素之间的自洽程度，不是命中概率。') + '</div>';
   }
   // 换事类即清空手动用神：否则「上次自定义选了父母」会带进下一个不相关的事由。
   // 补充事由同样要清：旧原文属于旧问题，留着会让「这笔货款何时到」去当官鬼的题面。
@@ -850,11 +854,19 @@
     // 它没法更具体。注入后模型的任务从「猜时间」变为「解释这个区间」。
     if (lastAnalysis && lastAnalysis.yingqiWindow) {
       const w = lastAnalysis.yingqiWindow;
-      txt += '\n【应期窗口（规则链换算 · 非推断）】\n' + (typeof C.yingqiText === 'function' ? C.yingqiText(w) : w.text) + '\n';
-      txt += '- 区间由盘面要素（出空／冲空／值日／出月／逢冲／引拔）换算而来；置信度表示这些要素的自洽程度，不是命中概率。\n';
+      const pin = !!w.pinnedDay;
+      txt += '\n【' + (pin ? '应期（题面定日 · 非推断）' : '应期窗口（规则链换算 · 非推断）') + '】\n' +
+        (typeof C.yingqiText === 'function' ? C.yingqiText(w) : w.text) + '\n';
+      txt += pin
+        ? '- 题面已指明是哪一日，应期即以该日为准；文中「备选节点」只是雨气再聚之类的时间参考，不得替换主应期。' +
+          '置信度表示盘面要素的自洽程度，不是命中概率。\n'
+        : '- 区间由盘面要素（出空／冲空／值日／出月／逢冲／引拔）换算而来；置信度表示这些要素的自洽程度，不是命中概率。\n';
       if (forAI) {
-        txt += '- 正文与「应期」行须落在该区间内，并沿用其置信度；若认定区间有误，须指明依据与上述哪一条要素冲突，' +
-          '不得只写「近期」「不久」这类无法核对的措辞。\n';
+        txt += pin
+          ? '- 正文与「应期」行须写该日（附公历日期）并沿用其置信度；备选节点可作白话总结里的一句提及，' +
+            '不得写成「应期为X日前后」而把所问之日挤掉。\n'
+          : '- 正文与「应期」行须落在该区间内，并沿用其置信度；若认定区间有误，须指明依据与上述哪一条要素冲突，' +
+            '不得只写「近期」「不久」这类无法核对的措辞。\n';
       }
     }
     if (forAI && lastAnalysis && lastAnalysis.trend) {
@@ -1376,7 +1388,8 @@
     '【盘面事实不可改写】排盘里的六亲、纳甲、世应、动爻、旬空、月破、伏神、卦型均为程序确定性推算结果；' +
     '不得重新推算、不得改写，也不得写出与之矛盾的表述。吉凶、应期与取象可作传统推断，但须与盘面一致。',
     '【主次次序】以作用到世、应、用神的实际生克冲合为主证据；只出现在卦中却未作用到主线的结构，' +
-    '列为辅助信息，不得升级为结论。不得用正负计分替代断卦。',
+    '列为辅助信息，不得升级为结论，但须一句话交代（如「另有亥卯未合木局虚一待用，未及主线」），不得整条漏写。' +
+    '不得用正负计分替代断卦。',
     '【追问沿用原盘】用户就同一事继续追问时，沿用本次排盘的起卦时刻、月日、爻值、世应与用神主线，' +
     '不重新起卦、不因当前日期变化而重算原盘、不事后改写首次结论；' +
     '只有当事项、对象、目标或时间范围发生实质变化时才说明需另起一卦。',
@@ -2682,7 +2695,9 @@
       bian: pan.hasBian ? pan.bianName : '（静卦）',
       yong: (a && a.yongshen) ? (a.yongshen.type + ' ' + a.yongshen.line.zhi) : '',
       trend: (a && a.trend) || '',
-      yingqi: (w && w.status === 'ok') ? (w.dateLo + '—' + w.dateHi) : ((w && w.text) || '—'),
+      yingqi: (w && w.status === 'ok')
+        ? (w.dateLo === w.dateHi ? w.dateLo : (w.dateLo + '—' + w.dateHi))
+        : ((w && w.text) || '—'),
       meta: [
         ['月建', pan.pillars.monthGZ],
         ['日辰', pan.pillars.dayGZ],

@@ -251,5 +251,27 @@ yqKeys.forEach(function (k) {
   ok('键名契约：' + k + ' 的 tag「' + t + '」仍由 analyze 产出', !!anTags[t]);
 });
 
+// ---------- 9. 固定日锚点（2026-11-12） ----------
+// 占天时问「明日」，应期即明日；「用神值日」只作雨气再聚的备选节点。
+// 事故盘：水泽节之泽雷随，2026-11-12 庚寅日，用神父母申金——
+// 旧版窗口给「第 6 日丙申（11/18–20）」，产出成了「问明天、答一周后」。
+const WDT = new Date(2026, 10, 12, 9, 32);
+WDT.__wall = { y: 2026, m: 11, d: 12, h: 9, min: 32 };
+const WPAN = C.paipan([1, 9, 0, 6, 1, 0], WDT);
+const wRain = C.analyze(WPAN, '父母', { topic: '明天新郑下不下雨' });
+ok('固定日：问明日 → 应期钉在第 1 日', wRain.yingqiWindow.lo === 1 && wRain.yingqiWindow.hi === 1);
+eq('固定日：应期干支为明日辛卯', wRain.yingqiWindow.dayLo, '辛卯');
+eq('固定日：文案以「应期：明日」起', wRain.yingqiWindow.text.indexOf('应期：明日'), 0);
+ok('固定日：值日窗口退为备选节点', /备选节点/.test(C.yingqiText(wRain.yingqiWindow)));
+ok('固定日：主应期行不再出现丙申', wRain.yingqiWindow.text.indexOf('丙申') < 0);
+const wToday = C.analyze(WPAN, '父母', { topic: '今天会不会下雨' });
+ok('固定日：问今日 → 第 0 日', wToday.yingqiWindow.lo === 0);
+eq('固定日：今日干支庚寅', wToday.yingqiWindow.dayLo, '庚寅');
+const wSpan = C.analyze(WPAN, '父母', { topic: '这两天下雨吗' });
+ok('跨度词「这两天」不钉固定日，仍走值日窗口', wSpan.yingqiWindow.lo >= 2);
+// 反向：非天时占类即便题面有「明天」也不钉——那种「明天」多是事件日
+const wDeal = C.analyze(WPAN, '父母', { topic: '明天能签下合同吗' });
+ok('非天时题不钉固定日', wDeal.yingqiWindow.lo >= 2);
+
 console.log('\n应期窗口自检：PASS ' + pass + '　FAIL ' + fail);
 process.exit(fail ? 1 : 0);

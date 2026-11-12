@@ -1353,8 +1353,24 @@
     // 可选依赖 —— 模块未加载（旧缓存页面）时保持 null，绝不阻断断卦主流程。
     // 放在最后调用：本层读的是 out 自身的 yongshen / yjs / judgments / trend，
     // 不参与排盘，也不改动任何既有字段（不影响 M1–M16 的任何断言）。
+    // 固定日锚点（2026-11-12）：占天时类问「明日」，应期就是明日。
+    // 窗口只会算「用神值日」（实测「明天新郑下雨吗」得第 6 日丙申 = 一周后），
+    // 与本仓 spanNote「问明日即以明日干支为应期」直接冲突，模型只能抄窗口，
+    // 于是问明日、答一周后。只在「本类刻度为日（占天时）」且题面给出确定某日时
+    // 下传；跨月之事即便题面有「明天」也不钉（那种「明天」多是事件日而非应期）。
+    function fixedDayOf(topicQ) {
+      if (!topicQ || !LY.premise || typeof LY.premise.spanOf !== 'function') return null;
+      const sp = LY.premise.spanOf(topicQ);
+      if (!sp || sp.unit !== 'day' || sp.fixedDay === null || sp.fixedDay === undefined) return null;
+      const pk = typeof LY.premise.packOf === 'function' ? LY.premise.packOf(target, topicQ) : null;
+      if (pk && pk.typicalSpan !== 'day') return null;
+      return { day: sp.fixedDay, hit: sp.hit };
+    }
     if (typeof LY.yingqiWindow === 'function') {
-      try { out.yingqiWindow = LY.yingqiWindow(pan, out); } catch (e) { out.yingqiWindow = null; }
+      try {
+        const fx = fixedDayOf(topic);
+        out.yingqiWindow = LY.yingqiWindow(pan, out, fx ? { fixedDay: fx.day, hit: fx.hit } : undefined);
+      } catch (e) { out.yingqiWindow = null; }
     }
     return out;
   }

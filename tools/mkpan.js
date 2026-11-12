@@ -6,7 +6,7 @@ const TREND_TEXT = { ji: '吉', xiong: '凶', ping: '平', dai: '待审' };
 
 function panText(vals, at, question, target) {
   const pan = C.paipan(vals, at);
-  const a = C.analyze(pan, target);
+  const a = C.analyze(pan, target, question ? { topic: question } : undefined);
   const pil = pan.pillars;
   const q = question || '';
   let txt = '【六爻排盘】\n';

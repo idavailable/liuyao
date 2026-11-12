@@ -144,6 +144,7 @@
       name: '天时', re: /天气|下雨|降雨|雨雪|下雪|降雪|晴天|天晴|放晴|台风|气温|几度|会不会雨|有雨|雨吗/,
       pack: {
         anchors: ['预报时段（今日／明日／旬内）'], decisive: ['timeSpan'], typicalSpan: 'day',
+        naSlots: ['stage', 'process', 'rules', 'standard'],
         spanNote: '占天时以「日」为刻度：问明日即以明日干支应期，问旬内以旬为刻度；不得给月、年，也不得写「近期」。'
       }
     },
@@ -254,8 +255,9 @@
       }
     }
     const q = String(question == null ? '' : question);
+    let kp = null;
     if (q) {
-      const kp = pickKeywordPack(q);
+      kp = pickKeywordPack(q);
       if (kp) {
         if (domainKey === '__custom__' || !p) {
           // 自定义所测（或该用神值无 premise 字段）：事由包整体接管。
@@ -275,6 +277,15 @@
         }
       }
     }
+    // 不适用槽位（2026-11-12）：某些占类本就没有这些前提——占天时无「对象阶段」
+    // 「进程状态」「规则环境」「目标门槛」，问「明天新郑下雨吗」却列成三项低风险缺项，
+    // 模型被判「前提未定」而实际无可补，只能写「完整」，反成口径不一致。
+    // 由领域包声明 naSlots，judge 跳过，预检块也不再罗列。
+    const na = [];
+    [(p && p.naSlots) || [], (kp && kp.pack && kp.pack.naSlots) || []].forEach(function (arr) {
+      arr.forEach(function (id) { if (na.indexOf(id) < 0) na.push(id); });
+    });
+    base.naSlots = na;
     return base;
   }
 
@@ -311,6 +322,18 @@
   const UNKNOWN_WHEN_RE = /不知道|不清楚|不确定|说不准|没说|什么时候|何时|几时|哪[天日]|未知/;
   const EVENT_DAY_RE = /今[天日夜晚早]|明[天日晚早]|后天|当天|当日/g;
 
+  // 固定单日：所问就是某一日（今日/明日/后天/当日）。与「这两天/三天」这类跨度词
+  // 不同——它给出的是一个确定的日子，应期没有换算余地。
+  // 仅在天时类等「以日为刻度、问哪日就应哪日」的占类里作为应期锚点使用，
+  // 由调用方判断是否采用（见 yingqi-window 的固定日分支）。
+  function dayOffsetOf(hit) {
+    const c = String(hit || '').charAt(0);
+    if (c === '今' || c === '当') return 0;
+    if (c === '明') return 1;
+    if (c === '后') return 2;
+    return null; // 「这两天/三天/几天/一会儿」是跨度不是确定的某日
+  }
+
   function spanOf(question) {
     let q = String(question == null ? '' : question);
     let eventHit = '';
@@ -329,11 +352,17 @@
         const u = UNITS[r.unit];
         return {
           unit: r.unit, rank: u.rank, label: u.label, days: u.days,
-          hit: hit, calendar: CALENDAR_RE.test(hit), explicit: true, eventHit: eventHit
+          hit: hit, calendar: CALENDAR_RE.test(hit), explicit: true, eventHit: eventHit,
+          // eventHit 非空＝「今天考试」这类事件日已被剔除，剩下的时间概念是结果跨度，
+          // 此时不得再把那个单日词当应期锚点。
+          fixedDay: (r.unit === 'day' && !eventHit) ? dayOffsetOf(hit) : null
         };
       }
     }
-    return { unit: 'unknown', rank: 0, label: '未明示', days: 0, hit: '', calendar: false, explicit: false, eventHit: eventHit };
+    return {
+      unit: 'unknown', rank: 0, label: '未明示', days: 0, hit: '', calendar: false,
+      explicit: false, eventHit: eventHit, fixedDay: null
+    };
   }
 
   /**
@@ -346,7 +375,12 @@
     const q = String(question == null ? '' : question);
     const pack = packOf(domainKey, q);
     const span = spanOf(q);
+    const naSet = pack.naSlots || [];
     const slots = SLOTS.map(function (s) {
+      // 不适用槽位：本占类无此前置（占天时无对象阶段），既不算已知也不算缺项。
+      if (naSet.indexOf(s.id) >= 0) {
+        return { id: s.id, label: s.label, ask: s.ask, known: true, hit: '', partial: false, risk: 'none', flip: !!s.flip, na: true };
+      }
       let known = false, hit = '', partial = false;
       if (s.id === 'timeSpan') {
         known = span.explicit;
@@ -446,7 +480,7 @@
         : ('未见明示 → 以本类典型刻度「' + j.effLabel + '」作应期上限（兜底，非题面口径，须在正文写明此假设）'))) + '\n';
     if (j.ambiguity) out += '- 口径歧义：' + j.ambiguity.note + '\n';
     // 已明示的槽位只列命中词，缺项按风险分级列——省 token，且避免模型把预检误当成新盘面事实。
-    const known = j.slots.filter(function (s) { return s.known; });
+    const known = j.slots.filter(function (s) { return s.known && !s.na; });
     if (known.length) {
       out += '- 已明示：' + known.map(function (s) {
         return s.label + '「' + s.hit + '」' + (s.partial ? '（只见目标，未见具体门槛）' : '');
@@ -514,6 +548,13 @@
     // spanNote 此前算了但不注入（模型看不到）。仅当 pack.spanNote 非空时输出；
     // 放在「应期同域」行附近，与刻度要求同读。
     if (j.pack && j.pack.spanNote) out += '- 刻度口径：' + j.pack.spanNote + '\n';
+    // 固定日锚点（2026-11-12）：题面已指明是哪一天（明天/今天/后天），应期没有换算
+    // 余地。盘面【应期窗口】由「用神值日」换算，常落在数日之后——两者并存时以题面
+    // 为准，窗口退为备选节点。不写这一行，模型会照抄窗口，答成「问明天、应一周后」。
+    if (j.span.fixedDay !== null && j.span.fixedDay !== undefined) {
+      out += '- 应期锚点：题面已指明「' + j.span.hit + '」，应期即该日，勿另择；' +
+        '盘面【应期窗口】若给出更晚的日级节点，只作备选节点（如「雨气再聚」）引用，不得取代该日。\n';
+    }
     // 与【应期窗口】的和解（只有调用方明说「本次盘面带日级节点窗口」时才写）：
     // 引擎窗口由出空／值日／逢冲换算，天然是日级；若事项以年、季为刻度，
     // 两者并不矛盾——窗口是节点，不是应期。不写这一行，模型要么违背窗口、要么
