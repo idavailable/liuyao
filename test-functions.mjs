@@ -886,12 +886,13 @@ eq('慢路径：首字节到达后正文完整', rawSlow.indexOf('甲') >= 0 && 
 
 // ---------- #23 排盘超限 413 与客户端断开（2026-10-17） ----------
 // 旧版对 panText 静默 slice(0, 4000)，盘面尾巴被砍掉而模型照断、服务端无痕迹。
+// 2026-11-25：上限提到 6000（实测盘面已达 3800），超限值同步改为 6001。
 globalThis.fetch = origFetch;
 const rLong = await interpretPost({
   request: new Request('https://x/api/interpret', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ panText: '甲'.repeat(4001), provider: 'gpt', model: 'gpt-6-luna' })
+    body: JSON.stringify({ panText: '甲'.repeat(6001), provider: 'gpt', model: 'gpt-6-luna' })
   }),
   env: ENV_GPT
 });

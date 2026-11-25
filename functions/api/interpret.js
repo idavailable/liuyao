@@ -52,9 +52,16 @@
 import { customProviders, customKeyEnv, modelWhitelist, json, MAX_JSON_BODY, payloadTooLarge, requireCode as requireCodeGate,
   writeGuard, readJsonLimited, rateLimit, rateLimited, _rlState } from './_lib.js';
 
-// 入模规模上限：单请求最多 4,000（排盘）+ 8×2,000（历史）≈ 20,000 字符。
+// 入模规模上限：单请求最多 6,000（排盘）+ 8×2,000（历史）≈ 22,000 字符。
 // 旧值 8,000 + 20×4,000 ≈ 88,000，在未设 ACCESS_CODE 时是可直接放大的费用敞口。
-const LIMITS = { panText: 4000, historyTurns: 8, perMessage: 2000 };
+//
+// 2026-11-25：panText 4000 → 6000。4000 是 2026 年那次收紧时按当时的盘面文本定的，
+// 而盘面此后陆续加了【爻位状态】【前提预检】【领域方法】【契约】四段——实测（六类占类，
+// 含 60 字长事由）已达 2700–3800 字符，最长的「官鬼·多问叠加」3765，余量不足 6%。
+// 任何一次提示词增补都会让**全站断不了卦**（413 PAN_TOO_LONG，且前端不重试）。
+// 6000 留约 55% 余量，仍显著低于旧值 8000，费用敞口未回到治理前水平。
+// 与 records.js 的入库上限（panText.slice(0, 8000)）对齐：6000 入库不会被截断。
+const LIMITS = { panText: 6000, historyTurns: 8, perMessage: 2000 };
 
 // 上游流式响应的双重守卫。上游（用户自配的 OpenAI 兼容中转）属「信任边界外」，
 // 恶意或异常时可打爆 isolate 内存（CF Workers 上限 128 MB）：

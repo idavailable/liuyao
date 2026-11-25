@@ -2262,6 +2262,7 @@
           };
 
           let retriedWith = '';
+          let retryIncomplete = false;   // 补发稿仍缺结论行（尾部已加提示，底部文案须同步）
           /* 判残篇只看**剥掉提示后的正文**（2026-10-28）。旧版对拼了提示的全文测
              /结[论局]/，而提示文案里自带「结论：」三个字 → 残篇恒被判为完篇，
              这套补发在最该触发的地方从来没触发过。另外：只要尾部带过提示
@@ -2296,10 +2297,22 @@
             }
             if (myGen !== aiGen) return;
             const retryBare = stripStreamWarn(retry);
-            const good = !!retry && (/结[论局]\s*[：:]/.test(retryBare) || retryBare.length > bareReply.length);
-            if (good) {
+            /* 采用条件（2026-11-25 修）：
+               旧版 `含结论行 || 只是更长` 即采用——于是「新稿更长但仍无『结论：』行」会被
+               静默换成一份更长的残篇，且尾部不留任何提示，用户以为拿到了完篇。
+               现在分两档：
+                 · 含结论行 → 正常采用；
+                 · 无结论行但明显更长（≥1.2 倍且 ≥300 字）→ 仍采用（信息更多），
+                   但尾部追加提示，明确「这一稿仍未写完」；
+                 · 其余 → 保留首稿。 */
+            const retryHasConclusion = !!retry && /结[论局]\s*[：:]/.test(retryBare);
+            const retryLonger = !!retry && retryBare.length >= Math.max(300, Math.floor(bareReply.length * 1.2));
+            if (retryHasConclusion) {
               reply = retry;
-              // 只有真的换上、且模型不同才标注，避免「补全」二字在默认路径上刷屏
+              if (alt !== m) retriedWith = alt;
+            } else if (retryLonger) {
+              reply = String(retry) + '\n\n> ⚠ 本卦断语仍未写完（缺「结论／应期」行），以上为补发稿的部分内容。';
+              retryIncomplete = true;
               if (alt !== m) retriedWith = alt;
             }
           }
@@ -2390,7 +2403,12 @@
               : '';
             bodyEl.innerHTML = card + '<div class="ai-block">' + mdLite(reply) + '</div>' + auditHTML(reply) + checklistHTML(m) +
               (corrected ? '<div class="muted" style="margin-top:6px;font-size:12px">已按盘面校正 1 次</div>' : '') +
-              (retriedWith ? '<div class="muted" style="margin-top:6px;font-size:12px">首稿未完篇，本稿由 ' + esc(retriedWith) + ' 补全</div>' : '');
+              (retriedWith
+                ? '<div class="muted" style="margin-top:6px;font-size:12px">' +
+                  (retryIncomplete
+                    ? '首稿未完篇，补发稿（' + esc(retriedWith) + '）仍未写成完整结构，建议换模型重试'
+                    : '首稿未完篇，本稿由 ' + esc(retriedWith) + ' 补全') + '</div>'
+                : '');
             // 复制的是模型原文（正文末尾本含「结论/应期」四行），不拼前端解析出的卡片，避免重复
             attachCopyBtn(colHeadOf(m), reply);
             scrollBody(bodyEl);

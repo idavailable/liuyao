@@ -282,6 +282,10 @@
     if (near >= 2) consistency += 1;
 
     const downgrades = out.downgrades;
+    /* 定日模式下（pin !== null）这些条目只影响「备选节点」，不再谈「应期延后」——
+       应期已被题面钉死在某一天，写「应期易延后」等于自相矛盾，模型照抄进正文就变成
+       「明日下雨，但雨期会延后」（2026-11-25 实测两模型均出现该句）。 */
+    const late = pin !== null ? '（题面已定日，此项只影响备选节点，不改主应期）' : '';
     if (WEAK.indexOf(grade) >= 0) {
       downgrades.push('月建' + ZHI[pil.monthZhi] + '下用神' + grade + '，无根则虽应亦薄');
     }
@@ -290,7 +294,7 @@
       downgrades.push('卦中无元神生助，应期全靠用神自身与日辰');
     }
     if (has('忌神:忌神有力')) {
-      downgrades.push('忌神旺动克用，阻力在前，应期易延后');
+      downgrades.push('忌神旺动克用，阻力在前，' + (pin !== null ? '事象受阻' + late : '应期易延后'));
     }
     if (has('日冲:冲散')) {
       consistency -= 1;
@@ -303,7 +307,7 @@
     if (has('卦型:六合变六冲') || has('卦型:卦变六冲') || has('卦型:六冲变六冲')) {
       // 卦型只陈述、不扣分（与 analyze 的纳入准则一致：吉凶随占类翻转）。
       // 但「事多反复」确实会推迟应期，故仍列为下调原因。
-      downgrades.push('卦变六冲，事多反复，应期易延后');
+      downgrades.push('卦变六冲，事多反复，' + (pin !== null ? '过程反复' + late : '应期易延后'));
     }
     if (has('月破:月破有救（假破）')) {
       downgrades.push('用神月破，出月前难有实应');

@@ -1422,9 +1422,14 @@
       const marks = [L.moving ? '发动' : '安静', '月令' + grade];
       if (yuePo) {
         const zhen = weak && !daySupports;
+        // 2026-11-25：假破的原因分「旺相」与「得日辰扶」两种，旧版写「旺相或得日辰扶」
+        // 二选一——模型无法据此判断这条救应到底靠哪个（两者对应不同的应期机制：
+        // 旺者出月即用，日扶者逢合逢值方解），故按实际成立的那一条写。
         marks.push('月破' + (zhen
           ? '（休囚无救·真破，逢值逢合方解）'
-          : '（旺相或得日辰扶·假破，出月或逢合逢值可解）'));
+          : (strong
+            ? '（旺相·假破，出月或逢合逢值可解）'
+            : '（休囚但得日辰生扶·假破，出月或逢合逢值可解）')));
       }
       if (riChong) {
         // 与 ruleDayChong 同一口径：动爻值旬空时「冲空则实」，不得再写「冲散」。
@@ -1438,14 +1443,43 @@
         marks.push(L.moving ? '日合·合绊' : (strong ? '日合·合起' : '日合·合绊'));
       }
       if (kong) marks.push(L.moving ? '旬空（动不为空，出空转实）' : '旬空（静空）');
+      /* 伏神自身状态（2026-11-25）。
+         旧版此处只写「（伏子孙午）」，伏神的月令旺衰、月破真假、日冲、旬空一概不输出。
+         本节在排盘文本里被声明为「须原样采纳」的确定性标记，而伏神用神恰恰最需要
+         这些标记——模型只能心算，正是 2026-10-30 那轮「硬事实层空转」在伏神路径上的残留
+         （实测：伏神支月破，盘面不写，模型按不破论）。
+         伏神永不发动，故日冲只分暗动／日破，不得写「冲散」；日辰生扶口径同 ruleDay。 */
+      let fuText = '';
+      if (L.fu) {
+        const F = L.fu;
+        const fg = wangXiangXiuQiuSi(F.wx, pil.monthZhi);
+        const fStrong = STRONG.indexOf(fg) >= 0;
+        const fWeak = WEAK.indexOf(fg) >= 0;
+        const fRel = relation5(F.wx, ZHI_WX[pil.dayZhi]);
+        const fDaySupports = (pil.dayZhi === F.zhiIdx) || fRel === '得生' || fRel === '比和';
+        const fm = ['月令' + fg];
+        if (chong(F.zhiIdx, pil.monthZhi)) {
+          fm.push(fWeak && !fDaySupports ? '月破·真破' : (fStrong ? '月破·假破（旺相）' : '月破·假破（得日扶）'));
+        }
+        if (chong(F.zhiIdx, pil.dayZhi)) fm.push(fStrong ? '日冲·暗动' : '日冲·日破');
+        else if (liuhe(F.zhiIdx, pil.dayZhi)) fm.push(fStrong ? '日合·合起' : '日合·合绊');
+        if (pil.kong.indexOf(F.zhiIdx) >= 0) fm.push('旬空');
+        fuText = '（伏' + F.lq + F.zhi + '：' + fm.join('，') + '；伏而不动，须冲飞或值日方出）';
+      }
       rows.push({
         pos: i, kong: kong, yuePo: yuePo, riChong: riChong, grade: grade,
+        // fu 供消费侧（测试、审计）读取伏神状态，与 text 同源
+        fu: L.fu ? {
+          lq: L.fu.lq, zhi: L.fu.zhi, grade: wangXiangXiuQiuSi(L.fu.wx, pil.monthZhi),
+          yuePo: chong(L.fu.zhiIdx, pil.monthZhi), riChong: chong(L.fu.zhiIdx, pil.dayZhi),
+          kong: pil.kong.indexOf(L.fu.zhiIdx) >= 0
+        } : null,
         text: LINE_NAMES[i] + ' ' + L.lq + (L.gan || '') + L.zhi +
           (L.shi ? '（世）' : '') + (L.ying ? '（应）' : '') +
           // P2-CORE-2（2026-11-03）：补完伏神行标记。旧版 `(L.isFu ? '' : '')` 两分支同值
           // 空操作（本想给伏神行加标记未写完）；且 isFu 只存在于 pickYongshen 造的用神副本上，
           // pan.lines 永不携带——故按 L.fu（该爻之下伏有六亲）标记，与排盘文本伏神列同口径。
-          (L.fu ? '（伏' + L.fu.lq + L.fu.zhi + '）' : '') +
+          fuText +
           '：' + marks.join('，')
       });
     }

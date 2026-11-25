@@ -273,5 +273,19 @@ ok('跨度词「这两天」不钉固定日，仍走值日窗口', wSpan.yingqiW
 const wDeal = C.analyze(WPAN, '父母', { topic: '明天能签下合同吗' });
 ok('非天时题不钉固定日', wDeal.yingqiWindow.lo >= 2);
 
+/* 定日模式下不得出现「应期易延后」（2026-11-25）。
+   应期已被题面钉死在某一天，再写「易延后」等于自相矛盾——实测两模型都照抄成了
+   「明日有雨，但雨期会延后」。下调原因须改为「只影响备选节点」。 */
+// 用未济盘（忌神旺动克用，必产生该条下调原因）
+const DT_UNJI = new Date(2026, 9, 30, 23, 7);
+DT_UNJI.__wall = { y: 2026, m: 10, d: 30, h: 23, min: 7 };
+const wUnji = C.analyze(C.paipan([0, 9, 0, 9, 6, 1], DT_UNJI), '父母', { topic: '明天新郑会下雨吗' });
+const wRainLate = (wUnji.yingqiWindow.downgrades || []).join('；');
+ok('定日模式下调原因不含「应期易延后」', wRainLate.indexOf('应期易延后') < 0);
+ok('定日模式下调原因改为「只影响备选节点」', wRainLate.indexOf('只影响备选节点') >= 0);
+// 反向：非定日仍保留「延后」措辞（该盘问月内之事，不钉日）
+const wMonth = C.analyze(C.paipan([0, 9, 0, 9, 6, 1], DT_UNJI), '父母', { topic: '这个月会下雨吗' });
+ok('非定日保留「应期易延后」', (wMonth.yingqiWindow.downgrades || []).join('；').indexOf('应期易延后') >= 0);
+
 console.log('\n应期窗口自检：PASS ' + pass + '　FAIL ' + fail);
 process.exit(fail ? 1 : 0);

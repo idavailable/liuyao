@@ -63,6 +63,25 @@ const panChongKong = C.paipan([0, 0, 9, 0, 0, 0], new Date(2026, 0, 4, 12, 0));
 eq('lineStates 动空逢日冲=冲实', C.lineStates(panChongKong)[2].text.indexOf('日冲·冲实') >= 0, true);
 eq('lineStates 动空逢日冲不再写冲散', C.lineStates(panChongKong)[2].text.indexOf('冲散') < 0, true);
 
+// P2：伏神自身状态必须输出（2026-11-25）。
+// 本节在排盘文本里声明「须原样采纳」，旧版对伏神只写「（伏官鬼亥）」，伏神的
+// 月令/月破/日冲/旬空一概不给判据，模型只能心算（伏神用神恰恰最依赖这些判据）。
+// 用例：火水未济（戌月丑日），三爻兄弟午下伏官鬼亥，亥在戌月为死地。
+const panFuState = C.paipan([0, 9, 0, 9, 6, 1], new Date(2026, 9, 30, 23, 7));
+const rowFu = C.lineStates(panFuState)[2];
+eq('伏神行输出自身月令', rowFu.text.indexOf('伏官鬼亥：月令死') >= 0, true);
+eq('伏神行标明伏而不动', rowFu.text.indexOf('伏而不动') >= 0, true);
+eq('伏神行结构化字段 grade', rowFu.fu && rowFu.fu.grade, '死');
+eq('非伏神行 fu 为 null', C.lineStates(panFuState)[0].fu, null);
+// 伏神永不发动：日冲分支不得出现「冲散」（该词只属动爻）
+eq('伏神行不写冲散', /伏[^）]*冲散/.test(rowFu.text), false);
+
+// 月破假破须区分「旺相」与「得日扶」两种原因（2026-11-25）：
+// 两者对应不同救应机制，旧版写「旺相或得日辰扶」二选一，模型无从判断靠哪一条。
+// 未济二爻辰土：戌月土当令（旺）→ 假破（旺相）。
+eq('假破写明旺相成因', C.lineStates(panFuState)[1].text.indexOf('（旺相·假破') >= 0, true);
+eq('假破不再写「旺相或得日辰扶」', C.lineStates(panFuState)[1].text.indexOf('或得日辰扶') < 0, true);
+
 // ---------- 3. 月破真假 ----------
 // 午火爻，子月冲午；火死于冬 → 真破（无日生扶）
 const zp = C.ruleYuePo(mkLine({ zhi: '午', zhiIdx: 6, wx: '火' }), mkPil({ monthZhi: 0, dayZhi: 0 }), '死', false, '官鬼');
