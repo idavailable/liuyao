@@ -203,8 +203,8 @@ git status -sb                    # 若显示 ahead，先推送再审计
   - 五行关系统一走 `relation5()` 五值完备函数（比和/得生/受克/泄/耗），各规则不再用 `else` 兜底猜关系——历史 bug：月建子水配用神亥水（同五行异支）曾落兜底误报「克月建」，用神克日辰曾被误判「日辰比和」并污染月破真假与真空判定
 
 - **AI 断卦**：排盘文本交给大模型按京房纳甲体系论断（用神 → 旺衰生克 → 吉凶 → 应期 → 白话总结），术语规范引自《增删卜易》《卜筮正宗》
-- **多模型对比**：可同时勾选多个模型并列输出断卦结果，互为参照。**默认勾选 `gemini-3.8-flash` + `deepseek-flash`**（2026-10-21 起；`gemini-3.6-flash` 实测 13 次首轮有 6 次断在句中，见下条）
-- **残篇自动补全**：首稿缺「结论：」行时不把半篇交出去，自动重来一次；补发**改用同族更稳的模型**（`gemini-3.6-flash` → `gemini-3.8-flash`，同模型重跑对 46% 的残篇率没有改善），列内标注「首稿未完篇，本稿由 X 补全」。反向不换：3.8 残篇原地重跑，不把稳定的换成不稳定的
+- **多模型对比**：可同时勾选多个模型并列输出断卦结果，互为参照。**默认勾选 `gemini-3.8-flash` + `deepseek-flash`**；Gemini 仅保留 `gemini-4-hydrogen` 与 `gemini-3.8-flash` 两款（2026-11-26 起，3.6 及更早不再适配，见下条）
+- **残篇自动补全**：首稿缺「结论：」行时不把半篇交出去，自动重来一次；补发**改用同族另一款模型**（`gemini-3.8-flash` ↔ `gemini-4-hydrogen`，同模型重跑只会再撞同一处），列内标注「首稿未完篇，本稿由 X 补全」
 - **进阶探讨**：断卦后可继续追问，各模型独立上下文，保持卦理一致
 - **断语一键复制**：模型列的断语、每条追问回复、卦例库中每条历史断语各自带一枚「复制」按钮，复制的是模型原文（含末尾「结论/应期/验证标志」四行），不拼前端解析出的结论卡片，便于留存转帖；按钮用 DOM 闭包持有原文而非 `data-*` 属性传递，规避引号换行两层转义
 - **类别 + 补一句事由**：类别定用神，事由定题面。选固定事类（求财／考试／天气等）后仍可补一句具体问题（「这笔货款本月能到吗」），原文进**前提预检**定时间刻度、进**领域块与 topic** 定断法口径；不选类别时按描述用关键词推断用神（推不出可手动指定）。此前只有「自定义」与「天气」能吃原文，其余五类拿到的只是硬编码短标签，与规程里「先区分收入、回款、单笔交易」的要求脱节
@@ -224,7 +224,7 @@ git status -sb                    # 若显示 ahead，先推送再审计
   /api/models     动态模型清单下发
   /api/records    卦例库 CRUD（D1；列表支持 ?limit=&offset=，默认 100/上限 200，返回 hasMore）
 供应商通道：
-  Gemini   → CF AI Gateway（绕开 Google 对数据中心 IP 的拒绝）→ Google 原生 generateContent
+  Gemini   → CF AI Gateway（绕开 Google 对数据中心 IP 的拒绝）→ Google 原生 generateContent（4 Hydrogen / 3.8 Flash）
   DeepSeek → api.deepseek.com（OpenAI 兼容）
   GPT      → 任意 OpenAI 兼容接口（官方或中转站）
   Custom   → CUSTOM_PROVIDERS 声明任意多家（Kimi/Qwen/GLM/硅基流动等）
@@ -285,6 +285,7 @@ git status -sb                    # 若显示 ahead，先推送再审计
 |------|------|
 | `GEMINI_API_KEY` | secret，Google AI Studio key（AIza 开头） |
 | `GEMINI_BASE_URL` | **secret**，CF AI Gateway 原生路径。含账号 ID 与网关名，故不写进仓库，用 `wrangler pages secret put GEMINI_BASE_URL` 设置；模板：`https://gateway.ai.cloudflare.com/v1/<ACCOUNT_ID>/<GATEWAY_NAME>/google-ai-studio/v1beta`。未配置则回退 Google 原生端点（数据中心 IP 常被拒） |
+| `GEMINI_THINKING_LEVEL` | 选填，Gemini 思考档：`low`（默认）/`medium`/`high`；`xhigh` 仅 Gemini 4 Hydrogen 支持，给 3.8 Flash 配会自动收敛为 `high`。旧的 `thinking_budget` 已不再发送——3.8 与 4 收到会直接 400 |
 
 **DeepSeek 通道**
 
@@ -306,7 +307,6 @@ git status -sb                    # 若显示 ahead，先推送再审计
 | `LLM_MAX_TOKENS` | 选填，单次生成上限。未设置则不传，由上游按自身默认值裁定（避免写死导致长断语被截断或短答复浪费配额） |
 | `SSE_HEARTBEAT_MS` | 选填，SSE 空闲心跳间隔（毫秒），默认 `15000`，下限 `1000`。上游思考期无输出时靠注释行保活，防 CF 边缘 ~100s 无数据 524 |
 | `LLM_CACHE_FIRST` | 选填，设为 `1` 时**首轮断卦也走网关缓存**（旧行为）。默认不设 = 首轮跳过缓存，见下方说明 |
-| `LLM_DEBUG_VARIANTS` | 选填，设为 `1` 时才接受请求体的 `variant`（A/B/C，gemini `thinkingConfig` 三组对照）。默认不设 = 参数被忽略，走 A |
 
 **为什么首轮断卦默认跳过缓存（`LLM_CACHE_FIRST`）**
 

@@ -1,5 +1,5 @@
 /* 线上采样探针：POST /api/interpret 流式取回，记录正文长度 / warn / 是否完篇 / 耗时
- * 用法：node tools/probe.js --model=gemini-3.6-flash --n=5 [--pan=kun|jiaren] [--parallel=2]
+ * 用法：node tools/probe.js --model=gemini-4-hydrogen --n=5 [--pan=kun|jiaren] [--parallel=2]
  * 输出：每次一行 JSON（stdout），末行汇总
  */
 const { panText } = require('./mkpan.js');
@@ -14,7 +14,7 @@ const PANS = {
 };
 
 function parseArgs(argv) {
-  const o = { model: 'gemini-3.6-flash', n: 3, pan: 'kun', parallel: 2, outdir: '' };
+  const o = { model: 'gemini-4-hydrogen', n: 3, pan: 'kun', parallel: 2, outdir: '' };
   argv.forEach(a => {
     const m = a.match(/^--([^=]+)=(.*)$/);
     if (m) o[m[1]] = m[2];

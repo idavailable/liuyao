@@ -10,8 +10,12 @@ export const DEFAULT_GPT_MODELS = 'gpt-6-luna,gpt-6-sol,gpt-6-astra';
 // 共用这一份，杜绝两处硬编码漂移——旧版两份各写三条，后台改其一忘其二时
 // 前端芯片可点而服务端 BAD_MODEL，且无任何提示（2026-10-21 审计修正）。
 // key 为 configured 探测用的密钥环境变量名（见 models.js 的 env[key]）。
+// 2026-11-26：Gemini 只保留 Gemini 4 Hydrogen 与 Gemini 3.8 Flash。
+// 不再适配更低版本——3.6 及更早走 thinking_budget，与 3.8/4 的 thinking_level
+// 是两套参数，同时留着就得在服务端写分支判断，属于「为旧模型付长期维护成本」。
+// 顺序即同族降级次序：Hydrogen 在前，失败时先落 3.8 Flash。
 export const BUILTIN_MODELS = [
-  { id: 'gemini-3.6-flash', pv: 'Google', key: 'GEMINI_API_KEY' },
+  { id: 'gemini-4-hydrogen', pv: 'Google', key: 'GEMINI_API_KEY' },
   { id: 'gemini-3.8-flash', pv: 'Google', key: 'GEMINI_API_KEY' },
   { id: 'deepseek-flash', pv: 'DeepSeek', key: 'DEEPSEEK_API_KEY' }
 ];

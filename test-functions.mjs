@@ -95,7 +95,7 @@ eq('未配置 → 空数组', customProviders({}), []);
 eq('未配置不产生告警', warns.length, warnsBefore);
 
 // ---------- #8 模型 id 字符集校验 ----------
-eq('合法 id', isSafeModelId('gemini-3.6-flash'), true);
+eq('合法 id', isSafeModelId('gemini-4-hydrogen'), true);
 eq('含引号 id 非法', isSafeModelId('x"><script>'), false);
 eq('含空格 id 非法', isSafeModelId('a b'), false);
 const cp = customProviders({ CUSTOM_PROVIDERS: JSON.stringify([
@@ -535,15 +535,15 @@ const rFb = await postGem('gemini-3.8-flash');
 const jFb = await rFb.json();
 eq('主模型 503 → 降级后 200', rFb.status, 200);
 eq('降级正文来自备选', jFb.reply, '降级正文');
-eq('model 字段为实际兜底模型', jFb.model, 'gemini-3.6-flash');
-eq('fallback 字段标出兜底', jFb.fallback, 'gemini-3.6-flash');
-eq('两次调用依次命中主/备模型', [gemCalls[0].indexOf('gemini-3.8-flash') >= 0, gemCalls[1].indexOf('gemini-3.6-flash') >= 0], [true, true]);
+eq('model 字段为实际兜底模型', jFb.model, 'gemini-4-hydrogen');
+eq('fallback 字段标出兜底', jFb.fallback, 'gemini-4-hydrogen');
+eq('两次调用依次命中主/备模型', [gemCalls[0].indexOf('gemini-3.8-flash') >= 0, gemCalls[1].indexOf('gemini-4-hydrogen') >= 0], [true, true]);
 eq('降级恰好两次调用', gemCalls.length, 2);
 
 // 反向：主模型直接成功时不触发降级、不引入 fallback 字段（不污染正常响应）
 gemQueue = [gemOk('正文')];
 gemCalls.length = 0;
-const rDirect = await postGem('gemini-3.6-flash');
+const rDirect = await postGem('gemini-4-hydrogen');
 const jDirect = await rDirect.json();
 eq('主模型成功不触发降级', gemCalls.length, 1);
 eq('成功响应不带 fallback 字段', 'fallback' in jDirect, false);
@@ -841,7 +841,7 @@ globalThis.fetch = function (url) {
   });
   return Promise.resolve(new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
 };
-const rGs = await postGem('gemini-3.6-flash');
+const rGs = await postGem('gemini-4-hydrogen');
 const evGs = await readSSEEvents(rGs);
 eq('Google 原生流式：正文逐段拼接', sseText(evGs), '水雷屯');
 eq('Google 原生流式：走 streamGenerateContent?alt=sse',
@@ -1010,7 +1010,7 @@ globalThis.fetch = function () {
   });
   return Promise.resolve(new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
 };
-const evTrunc = await readSSEEvents(await postGem('gemini-3.6-flash'));
+const evTrunc = await readSSEEvents(await postGem('gemini-4-hydrogen'));
 eq('finishReason=MAX_TOKENS → 正文仍照常下发', sseText(evTrunc), '半个断语');
 eq('finishReason=MAX_TOKENS → 发出 warn 事件', evTrunc.some(function (e) { return e.warn === 'MODEL_MAX_TOKENS'; }), true);
 eq('截断不写成 error（不应触发重试）', evTrunc.some(function (e) { return e.error; }), false);
@@ -1024,7 +1024,7 @@ globalThis.fetch = function () {
   });
   return Promise.resolve(new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
 };
-const evStop = await readSSEEvents(await postGem('gemini-3.6-flash'));
+const evStop = await readSSEEvents(await postGem('gemini-4-hydrogen'));
 eq('finishReason=STOP 且结论行齐全 → 不告警（反向对照）', evStop.some(function (e) { return e.warn; }), false);
 
 /* 2026-10-28：finish 缺失（流自然结束、上游什么都没说）必须告警。
@@ -1094,48 +1094,45 @@ globalThis.fetch = function () {
   });
   return Promise.resolve(new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
 };
-const evNoStruct = await readSSEEvents(await postGem('gemini-3.6-flash'));
+const evNoStruct = await readSSEEvents(await postGem('gemini-4-hydrogen'));
 eq('STOP 但缺结论行 → INCOMPLETE_STRUCTURE 告警',
   evNoStruct.some(function (e) { return e.warn === 'INCOMPLETE_STRUCTURE'; }), true);
 globalThis.fetch = origFetch;
 
-// generationConfig 变体对照（2026-10-21）：A=thinkingBudget:0，B=不传 thinkingConfig，
-// C=不传 + maxOutputTokens 8192。仅在 LLM_DEBUG_VARIANTS=1 时接受 body.variant。
+// generationConfig（2026-11-26）：Gemini 只认 thinkingConfig.thinkingLevel。
+// 旧的 thinkingBudget 是 2.5 及更早的参数，3.8 / 4 Hydrogen 收到会 400；
+// MINIMAL 也不被这两款支持，最低只能到 LOW。
 let gwBody = null;
 globalThis.fetch = function (url, opts) {
   gwBody = opts && opts.body ? JSON.parse(opts.body) : null;
   const body = new ReadableStream({ start: function (c) { c.enqueue(encG.encode(sseLine('甲'))); c.close(); } });
   return Promise.resolve(new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
 };
-const postVar = function (variant, env) {
+const postLvl = function (model, env) {
   return interpretPost({
     request: new Request('https://x/api/interpret', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ panText: '占测试', model: 'gemini-3.6-flash', variant: variant })
+      body: JSON.stringify({ panText: '占测试', model: model })
     }),
     env: Object.assign({ GEMINI_API_KEY: 'k' }, env || {})
   });
 };
-await (await postVar('A', { LLM_DEBUG_VARIANTS: '1' })).text();
-eq('变体 A → thinkingBudget 为 0', gwBody.generationConfig.thinkingConfig.thinkingBudget, 0);
-eq('变体 A → 不设 maxOutputTokens', gwBody.generationConfig.maxOutputTokens, undefined);
-await (await postVar('B', { LLM_DEBUG_VARIANTS: '1' })).text();
-eq('变体 B → 不传 thinkingConfig', gwBody.generationConfig.thinkingConfig, undefined);
-eq('变体 B → 不设 maxOutputTokens', gwBody.generationConfig.maxOutputTokens, undefined);
-await (await postVar('C', { LLM_DEBUG_VARIANTS: '1' })).text();
-eq('变体 C → 不传 thinkingConfig', gwBody.generationConfig.thinkingConfig, undefined);
-eq('变体 C → maxOutputTokens 给足 8192', gwBody.generationConfig.maxOutputTokens, 8192);
-await (await postVar('B', {})).text();
-// M24：生产口径走 policy.thinkBudget（gemini 默认 0 = 关思考，见 2026-10-28 线上 A/B 实测）。
-eq('未开调试开关 → 变体参数被忽略，走生产口径（关思考）',
-  gwBody.generationConfig.thinkingConfig.thinkingBudget, 0);
-await (await postVar('A', { GEMINI_THINKING_BUDGET: '-1' })).text();
-eq('显式 GEMINI_THINKING_BUDGET=-1 → 动态思考（不传 thinkingConfig）',
-  gwBody.generationConfig.thinkingConfig, undefined);
-const rVarEcho = await postVar('B', { LLM_DEBUG_VARIANTS: '1' });
-const evVarEcho = await readSSEEvents(rVarEcho);
-eq('变体回显事件（证明配置真生效）', evVarEcho.some(function (e) { return e.variant === 'B'; }), true);
+await (await postLvl('gemini-3.8-flash')).text();
+eq('默认 thinkingLevel=LOW', gwBody.generationConfig.thinkingConfig.thinkingLevel, 'LOW');
+eq('旧参数 thinkingBudget 不出现', gwBody.generationConfig.thinkingConfig.thinkingBudget, undefined);
+eq('不传 temperature', gwBody.generationConfig.temperature, undefined);
+eq('默认不设 maxOutputTokens', gwBody.generationConfig.maxOutputTokens, undefined);
+await (await postLvl('gemini-3.8-flash', { GEMINI_THINKING_LEVEL: 'high' })).text();
+eq('GEMINI_THINKING_LEVEL=high → HIGH', gwBody.generationConfig.thinkingConfig.thinkingLevel, 'HIGH');
+await (await postLvl('gemini-4-hydrogen', { GEMINI_THINKING_LEVEL: 'xhigh' })).text();
+eq('4 Hydrogen 支持 XHIGH', gwBody.generationConfig.thinkingConfig.thinkingLevel, 'XHIGH');
+await (await postLvl('gemini-3.8-flash', { GEMINI_THINKING_LEVEL: 'xhigh' })).text();
+eq('3.8 Flash 不支持 xhigh → 按模型降到 HIGH', gwBody.generationConfig.thinkingConfig.thinkingLevel, 'HIGH');
+await (await postLvl('gemini-3.8-flash', { GEMINI_THINKING_LEVEL: 'minimal' })).text();
+eq('minimal 不被 3.8/4 支持 → 回落 LOW', gwBody.generationConfig.thinkingConfig.thinkingLevel, 'LOW');
+await (await postLvl('gemini-3.8-flash', { LLM_MAX_TOKENS: '8192' })).text();
+eq('LLM_MAX_TOKENS 仍可显式限制输出', gwBody.generationConfig.maxOutputTokens, 8192);
 globalThis.fetch = origFetch;
 
 // ---------- #24 按盘 OG 预览（functions/index.js + functions/api/_share.js）----------
@@ -1561,7 +1558,7 @@ globalThis.fetch = function () {
   });
   return Promise.resolve(new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
 };
-const evGemThink = await readSSEEvents(await postGem('gemini-3.6-flash'));
+const evGemThink = await readSSEEvents(await postGem('gemini-4-hydrogen'));
 eq('gemini thought 片段走 r 通道', evGemThink.filter(function (e) { return e.r; }).map(function (e) { return e.r; }).join(''), ' Gemini 草稿');
 eq('gemini thought 片段不进正文', sseText(evGemThink), ' Gemini 正文');
 
@@ -1644,11 +1641,12 @@ const postModel = function (provider, model, extraEnv) {
 const lastCall = function () { return policyCalls[policyCalls.length - 1]; };
 
 policyCalls.length = 0;
-await (await postModel('gemini', 'gemini-3.6-flash')).text();
+await (await postModel('gemini', 'gemini-3.8-flash')).text();
 const gemBody = lastCall().body;
-eq('M24 gemini 默认关思考（实测：放开后 200s 断在应期中途、无结论行）',
-  gemBody.generationConfig.thinkingConfig.thinkingBudget, 0);
-eq('M24 gemini 仍保留 temperature=0.2', gemBody.generationConfig.temperature, 0.2);
+eq('M24 gemini 默认思考档为 LOW（3.8 / 4 Hydrogen 只认 thinkingLevel）',
+  gemBody.generationConfig.thinkingConfig.thinkingLevel, 'LOW');
+eq('M24 旧参数 thinkingBudget 不再发送', gemBody.generationConfig.thinkingConfig.thinkingBudget, undefined);
+eq('M24 不传 temperature（Gemini 3 起采样参数已移除）', gemBody.generationConfig.temperature, undefined);
 eq('M24 gemini 不受 deepseek 的正文预算影响',
   gemBody.generationConfig.maxOutputTokens, undefined);
 
@@ -1805,14 +1803,14 @@ eq('M25 导出的 SYSTEM_PROMPT 常量本身未被污染（app.js 副本契约�
 }
 
 policyCalls.length = 0;
-await (await postModel('gemini', 'gemini-3.6-flash', { GEMINI_THINKING_BUDGET: '-1' })).text();
-eq('M24 GEMINI_THINKING_BUDGET=-1 → 不传 thinkingConfig（动态思考，供再实验）',
-  lastCall().body.generationConfig.thinkingConfig, undefined);
+await (await postModel('gemini', 'gemini-4-hydrogen', { GEMINI_THINKING_LEVEL: 'medium' })).text();
+eq('M24 GEMINI_THINKING_LEVEL=medium → MEDIUM',
+  lastCall().body.generationConfig.thinkingConfig.thinkingLevel, 'MEDIUM');
 
 policyCalls.length = 0;
-await (await postModel('gemini', 'gemini-3.6-flash', { GEMINI_THINKING_BUDGET: '2048' })).text();
-eq('M24 GEMINI_THINKING_BUDGET=2048 → 显式上限',
-  lastCall().body.generationConfig.thinkingConfig.thinkingBudget, 2048);
+await (await postModel('gemini', 'gemini-3.8-flash', { GEMINI_THINKING_LEVEL: 'xhigh' })).text();
+eq('M24 3.8 Flash 的 xhigh 收敛为 HIGH（该模型无此档）',
+  lastCall().body.generationConfig.thinkingConfig.thinkingLevel, 'HIGH');
 
 policyCalls.length = 0;
 await (await postModel('deepseek', 'deepseek-flash', { DEEPSEEK_MAX_TOKENS: '4096' })).text();
@@ -1956,7 +1954,7 @@ eq('vote 带正确口令 → 200',
 const plainReq = new Request('https://x/api/interpret', {
   method: 'POST',
   headers: { 'content-type': 'text/plain' },
-  body: JSON.stringify({ panText: '占测试', provider: 'gemini', model: 'gemini-3.6-flash' })
+  body: JSON.stringify({ panText: '占测试', provider: 'gemini', model: 'gemini-4-hydrogen' })
 });
 eq('text/plain 写请求 → 415', (await interpretPost({ request: plainReq, env: ENV_GPT })).status, 415);
 

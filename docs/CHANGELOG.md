@@ -1486,3 +1486,30 @@ first 更快（14s vs 27s）且能关思考，但**会漏结构行**：三次实
   （提醒后来者：`node` 脚本量长度别用 `wc -c`，一个汉字三字节，会把 3066 看成 8226。）
 - 伏神状态确已上线：同一张「妻财伏于三爻兄弟亥下」的盘，线上文本为
   `三爻 兄弟己亥（世）（伏妻财午：月令死；伏而不动，须冲飞或值日方出）：发动，月令旺`。
+
+### 2026-11-26：Gemini 通道收敛到 4 Hydrogen + 3.8 Flash（不再适配更低版本）
+
+**原因**：Gemini 3.6 Flash 及更早走 `thinkingBudget`，3.8 Flash 与 4 Hydrogen 只认
+`thinkingConfig.thinkingLevel`（low/medium/high[/xhigh]，MINIMAL 会 400），两套参数并存
+就得在服务端长期留分支；用户要求只留现役两款，不为旧模型付维护成本。
+
+**改动**：
+
+- `functions/api/_lib.js` `BUILTIN_MODELS`：`gemini-3.6-flash` 移除，新增
+  `gemini-4-hydrogen`（排在 3.8 Flash 之前，即同族降级先落 Hydrogen）。
+- `functions/api/interpret.js`：Google 分支只发
+  `generationConfig.thinkingConfig.thinkingLevel`，删掉 `thinkingBudget`、`temperature`
+  （Gemini 3 起采样参数移除，Hydrogen 直接忽略）与 A/B/C 变体实验（`LLM_DEBUG_VARIANTS`
+  随之废弃）。新增 `GEMINI_THINKING_LEVEL`（默认 `low`），`xhigh` 仅 Hydrogen 支持，
+  给 3.8 Flash 传会按模型收敛为 `high`——降级到备选模型时也在 `buildCall` 内按 modelId 重算。
+- `public/app.js`：内置清单、芯片提示、`FALLBACK_ORDER` 同步；`retryModelFor` 由
+  「gemini 一律换 3.8」改为「同族换另一款」（3.8 ↔ Hydrogen）；`modelLabel` 支持
+  多段名（4 Hydrogen）；新增 `ly_models_v3` 一次性迁移，把本地残留的 3.6 → 4 Hydrogen。
+- 测试：`test-functions.mjs` 的降级断言改为主 3.8 / 备 Hydrogen，variant 组替换为
+  thinkingLevel 组（默认 LOW、high、xhigh 按模型收敛、minimal 回落 LOW、不再发
+  thinkingBudget/temperature）；`test-shake.js` B3/B4 的模型选择改为「只留 3.8」。
+
+**验证**：`node --check` 全通过；`test:fn` 423/423；`npm test` 全绿。
+**部署**：`wrangler pages deploy public --project-name=liuyao`（Functions 有变更，
+必须重新部署才生效；`GEMINI_BASE_URL` 若仍指向 AI Gateway 的 google-ai-studio 原生路径，
+模型名直接换即可，无需改网关）。

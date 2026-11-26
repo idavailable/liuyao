@@ -1024,9 +1024,10 @@
 
   // ---------- AI 断卦 / 进阶探讨 / 卦例库（多模型对比） ----------
   // 模型清单：初始为内置默认，页面加载后从 /api/models 动态拉取（GPT 清单由后台 GPT_MODELS 变量驱动）
+  // 2026-11-26：Gemini 只保留 4 Hydrogen 与 3.8 Flash（3.6 及更早不再适配）。
   let MODELS = [
-    { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', pv: 'Google', tip: '快 · 易早断' },
-    { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', pv: 'Google', tip: '高峰易过载' },
+    { id: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen', pv: 'Google', tip: '新旗舰 · 四档思考' },
+    { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', pv: 'Google', tip: '实用 · 高峰易过载' },
     { id: 'deepseek-flash', label: 'DeepSeek V4.1 Flash', pv: 'DeepSeek', tip: '稳定 · 稍慢' }
   ];
   /* 默认模型（2026-11-12 再调整）：3.8 → deepseek。
@@ -1040,52 +1041,49 @@
 
   // 已知模型的特性提示；后台自定义的模型名无提示
   const MODEL_TIPS = {
-    // 2026-11-12 复测：3.6 三次全断，且断得极早（4.4s/10.1s/6.4s，220/411/566 字），
-    // 比 10 月那批「停在 405 tokens」更短——「偶发断稿」这个说法已经过时了。
-    'gemini-3.6-flash': '快 · 易早断',
-    'gemini-3.8-flash': '高峰易过载',
+    'gemini-4-hydrogen': '新旗舰 · 四档思考',
+    'gemini-3.8-flash': '实用 · 高峰易过载',
     'deepseek-flash': '稳定 · 稍慢',
     'gpt-6-luna': '便宜 · 快',
     'gpt-6-sol': '均衡',
     'gpt-6-astra': '最强 · 贵'
   };
 
-  // 模型名美化：gemini-3.6-flash → Gemini 3.6 Flash；gpt-6-luna → GPT 6 Luna
+  // 模型名美化：gemini-4-hydrogen → Gemini 4 Hydrogen；gpt-6-luna → GPT 6 Luna
   function modelLabel(id) {
     const parts = id.split('-');
     if (parts[0] === 'gpt' || parts[0] === 'o1' || parts[0] === 'o3') {
       return parts[0].toUpperCase() + ' ' + parts.slice(1).join(' ');
     }
-    return parts[0].charAt(0).toUpperCase() + parts[0].slice(1) +
-      (parts.length > 1 ? ' ' + parts.slice(1).join(' ') : '');
+    // 版本号（3.8）原样保留，单词首字母大写（hydrogen → Hydrogen）
+    const cap = function (s) {
+      if (!s) return s;
+      return /^[0-9.]+$/.test(s) ? s : s.charAt(0).toUpperCase() + s.slice(1);
+    };
+    return cap(parts[0]) + (parts.length > 1 ? ' ' + parts.slice(1).map(cap).join(' ') : '');
   }
 
-  /* 残篇补发用哪个模型：优先同供应商的兄弟模型，gemini 家族优先 3.8。
-     理由（2026-10-21 实测，n=13）：gemini-3.6-flash 有 46% 断在句中，用**同一个**
-     模型重跑仍有一半概率撞同一处；gemini-3.8-flash 六次全部成篇。
-     补发是为了拿到完篇，不是为了复现失败——所以能换就换。
-     没有兄弟模型（如 deepseek 单模型）时原地重跑，行为同旧版。 */
+  /* 残篇补发用哪个模型：同供应商的另一款（2026-11-26）。
+     gemini 家族现役两款（4 Hydrogen / 3.8 Flash）互为替补：谁出残篇就换另一款重写，
+     用同一个模型重跑只会再撞同一处。单模型供应商（deepseek）原地重跑。 */
   function retryModelFor(m) {
     const cur = MODELS.filter(function (x) { return x.id === m; })[0];
     if (!cur || !cur.pv) return m;
-    // 只在「有实测更稳的兄弟」时才换。反过来的情况（3.8 残篇 → 换 3.6）是降级，
-    // 宁可原地重跑：不能为了换而换，把稳定模型换成 46% 断稿的那个。
-    const stable = MODELS.filter(function (x) {
-      return x.pv === cur.pv && x.id !== m && x.id === 'gemini-3.8-flash';
+    const sib = MODELS.filter(function (x) {
+      return x.pv === cur.pv && x.id !== m && x.configured !== false;
     })[0];
-    return stable ? stable.id : m;
+    return sib ? sib.id : m;
   }
 
   /* 残篇补发该用哪个模型（2026-10-30）。
-     retryModelFor 只解决「同供应商有更稳的兄弟」，对 deepseek 这种单模型供应商
+     retryModelFor 只解决「同供应商有另一个模型」，对 deepseek 这种单模型供应商
      直接返回自己 —— 于是「deepseek 首稿断在 1000 字 → 补发又用 deepseek 从头重跑」。
      而补发的时间预算（AI_RETRY_DEADLINE 180s）连它一次完整生成都不够
      （首字节 60~90s + 长正文），第 2、3 次 attempt 只剩 AI_RETRY_MIN_TIMEOUT 的 15s，
      必然秒败。用户侧看到的就是「连续 3 次尝试都没有拿到完整断语」——
      三次都是在重跑同一件第一次就没做完的活，不是模型三次都拒绝。
-     这里补上「兄弟模型不存在时换一家」：deepseek → gemini-3.6-flash（52s 完篇）。
-     但 gemini 家族**不换**：3.8 残篇时 fallbackModelFor 会优先挑 3.6，
-     而 3.6 的残篇率是 46%，属于降级，宁可原地重跑。 */
+     这里补上「同族没有另一个模型时换一家」：deepseek → gemini-4-hydrogen。
+     gemini 家族自身有兄弟模型，走 retryModelFor 就够了。 */
   function repairModelFor(m) {
     const sib = retryModelFor(m);
     if (sib !== m) return sib;
@@ -1095,18 +1093,11 @@
     return fb || m;
   }
 
-  /* 「这个模型压根不产出正文」时的替补（2026-10-28 首版，2026-11-12 改优先级）。
-     与 retryModelFor 分工不同：那个只在同供应商里挑「更稳的兄弟」（gemini 3.6→3.8），
+  /* 「这个模型压根不产出正文」时的替补（2026-10-28 首版，2026-11-26 改口径）。
+     与 retryModelFor 分工不同：那个只在同供应商里换另一款，
      对 deepseek 这种单模型供应商等于原地重跑，重试十次也是十次一样的空转。
-     这里要的是「换一家能出正文的」。
-
-     2026-11-12 复测（同一盘面）：3.8 成功 1/2（失败是 81s 只发 1 个事件后
-     UPSTREAM_TIMEOUT）、3.6 成功 0/3（且断得极早：4.4s/10.1s/6.4s，220/411/566 字）、
-     deepseek 在精简提示词下 9/9 全成篇（M26 后复测，27–75s，1059–1552 字）。
-     ——10-28 那条「3.6 一次 52s 完篇」已经不成立，把它摆在替补第一位等于把
-     确定性失败排在前面。次序按「今天真能出正文」排：3.8 → deepseek → 3.6
-     （3.6 只作为最后的「有字总比没字强」）。传进来的若是 deepseek，会先跳到 3.8。 */
-  const FALLBACK_ORDER = ['gemini-3.8-flash', 'deepseek-flash', 'gemini-3.6-flash'];
+     这里要的是「换一家能出正文的」。次序：Gemini 4 Hydrogen → 3.8 Flash → deepseek。 */
+  const FALLBACK_ORDER = ['gemini-4-hydrogen', 'gemini-3.8-flash', 'deepseek-flash'];
   function fallbackModelFor(m) {
     const usable = MODELS.filter(function (x) { return x.id !== m && x.configured !== false; });
     for (let i = 0; i < FALLBACK_ORDER.length; i++) {
@@ -1188,6 +1179,23 @@
       }
     } catch (e) { /* 脏数据不迁移，保持原样 */ }
     lsSet('ly_models_v2', '1');
+  })();
+
+  /* 下架模型迁移（2026-11-26）：Gemini 3.6 Flash 已从清单移除，本地仍存着它的
+     组合会被 applyModels 过滤成只剩 deepseek 一列。这里只替换这一个 id（→ 4 Hydrogen，
+     同族现役旗舰），用户自选的其余组合原样保留。一次性标记 ly_models_v3。 */
+  (function migrateRetiredModels() {
+    try {
+      if (localStorage.getItem('ly_models_v3') === '1') return;
+      const raw = localStorage.getItem('ly_models');
+      if (!raw) return;
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr) || arr.indexOf('gemini-3.6-flash') < 0) return;
+      lsSet('ly_models', JSON.stringify(arr.map(function (id) {
+        return id === 'gemini-3.6-flash' ? 'gemini-4-hydrogen' : id;
+      })));
+    } catch (e) { /* 脏数据不迁移 */ }
+    lsSet('ly_models_v3', '1');
   })();
 
   let selModels = loadSelModels();

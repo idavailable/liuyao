@@ -420,10 +420,6 @@ export async function onRequestPost(context) {
   /* 诊断模式（body.diag === true）：只回一帧摘要，不逐字下发。
      用于在慢网/链路故障时判断「上游有没有给正文」，见 pipeUpstreamSSE 末尾。 */
   const diag = body.diag === true;
-  // 参数对照实验开关：仅在显式开启 env 时接受 body.variant（A/B/C），
-  // 否则一律按 A（旧行为）。防止外部随意改生成参数。
-  const variant = (env.LLM_DEBUG_VARIANTS === '1' && typeof body.variant === 'string')
-    ? body.variant.toUpperCase().slice(0, 1) : null;
 
   const model = (body.model || '').toString();
   const wl = modelWhitelist(env);
@@ -457,24 +453,23 @@ export async function onRequestPost(context) {
   /* 按模型分策略（M24）。
      旧版对所有模型用同一套参数，方向恰好是反的：
        - deepseek-flash 完全不限思考、也不传 max_tokens——实测 10.2k 字草稿、正文零字；
-       - gemini 3.x 虽然被硬塞 thinkingBudget=0，但那是为躲思考路径的 high demand 503
-         而加的，并非按「这个模型适合什么」来定的（详见下方 gemini 分支的实测记录）。
-     现在把「思考预算 / 正文预算 / 成文约束」三件事按模型分开，env 可逐项覆盖：
-       GEMINI_THINKING_BUDGET  默认 0（关思考）；'-1' = 动态思考；正整数 = 上限
+       - gemini 3.x 被硬塞 thinkingBudget=0，那是为躲 thinking 路径的 high demand 503
+         而加的临时手段，并非按「这个模型适合什么」来定的。
+     现在把「思考档 / 正文预算 / 成文约束」三件事按模型分开，env 可逐项覆盖：
+       GEMINI_THINKING_LEVEL   默认 low（low/medium/high；xhigh 仅 4 Hydrogen）
        DEEPSEEK_MAX_TOKENS     默认 8192（旧版不传，交给上游默认值）
        DEEPSEEK_TAME           '0' 可关掉「直接成文」追加段 */
   function modelPolicy(modelId, google) {
     if (google) {
-      /* gemini 3.x 的思考预算（2026-10-28 线上 A/B 实测，非推测）：
-           thinkingBudget=0  → 52s 完篇，43 帧正文，零告警；
-           不传（动态思考）  → 首字节 4.8s，200s 时仍在流中、仅 1103 字，
-                              正文断在「断应期」第 3 点中途，无「结论：」行。
-         即：3.x 的动态思考会吃掉输出预算并显著拖慢生成，对「长结构化断语」是负收益。
-         故默认仍关思考；想再试可设 GEMINI_THINKING_BUDGET=-1，或给正整数上限。 */
-      const raw = env.GEMINI_THINKING_BUDGET;
-      const v = raw === undefined ? '' : String(raw).trim();
-      const budget = (v === '-1') ? null : Math.max(0, parseInt(v || '0', 10) || 0);
-      return { thinkBudget: budget, maxTokens: 0, sysExtra: '' };
+      /* Gemini 3.8 Flash / 4 Hydrogen 只认 thinkingConfig.thinkingLevel（2026-11-26）。
+         旧的 thinking_budget 是 Gemini 2.5 及更早的参数；3.8 与 4 收到它会直接 400，
+         收到 thinkingLevel: MINIMAL 同样 400（3.8 最低 low，Hydrogen 最低 low）。
+         本项目要的是「直接成文、长结构化断语」，思考档越高越吃输出预算、首字节越晚
+         （Hydrogen 自身默认 high），故默认压到 low；需要深推时用 env 调高。
+         xhigh 只有 Gemini 4 Hydrogen 支持，给 3.8 传会被拒——在 buildCall 里按模型 clamp。 */
+      const raw = String(env.GEMINI_THINKING_LEVEL || 'low').trim().toLowerCase();
+      const want = (raw === 'medium' || raw === 'high' || raw === 'xhigh') ? raw : 'low';
+      return { thinkLevel: want, maxTokens: 0, sysExtra: '', promptMode: 'full' };
     }
     if (provider === 'deepseek') {
       /* deepseek-flash 的正文预算（2026-10-28 线上两轮实测，方向曾经改反）：
@@ -496,9 +491,9 @@ export async function onRequestPost(context) {
          实测（同盘 3 次）：full 下 1 万+ 事件全是英文逐行 parse 盘面，正文 0 字。
          DEEPSEEK_PROMPT=full 可原地退回（保留为对照实验入口）。 */
       const mode = String(env.DEEPSEEK_PROMPT || 'lean').toLowerCase() === 'full' ? 'full' : 'lean';
-      return { thinkBudget: null, maxTokens: mt, sysExtra: '', promptMode: mode };
+      return { maxTokens: mt, sysExtra: '', promptMode: mode };
     }
-    return { thinkBudget: null, maxTokens: 0, sysExtra: '', promptMode: 'full' };
+    return { maxTokens: 0, sysExtra: '', promptMode: 'full' };
   }
   const policy = modelPolicy(model, isGoogle);
 
@@ -570,24 +565,18 @@ export async function onRequestPost(context) {
       const contents = messages.filter(function (m) { return m.role !== 'system'; }).map(function (m) {
         return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] };
       });
-      // generationConfig 三变体（2026-10-21 对照实验用）：
-      //   默认/A = thinkingBudget:0（旧行为，强行关思考）
-      //   B        = 不传 thinkingConfig（交给 gemini 3.x 自身动态思考）
-      //   C        = 不传 thinkingConfig + maxOutputTokens 8192
-      // 背景：gemini-3.6-flash 在 A 下只生成 137/405 tokens 就 finishReason=STOP，
-      // 断语断在句中且无「结论：」行；怀疑对 3.x 关思考损伤长输出。
-      // 变体只在 env.LLM_DEBUG_VARIANTS === '1' 时生效，生产默认关闭。
-      const genCfg = { temperature: 0.2 };
-      // 生产口径由 policy.thinkBudget 决定（默认 null = 不传 thinkingConfig，交给
-      // gemini 3.x 动态思考）；variant 只在 LLM_DEBUG_VARIANTS=1 的对照实验里生效。
-      const thinkBudget = (variant === 'B' || variant === 'C') ? null
-        : (variant === 'A' ? 0 : policy.thinkBudget);
-      if (thinkBudget !== null && thinkBudget !== undefined) {
-        genCfg.thinkingConfig = { thinkingBudget: thinkBudget };
-      }
+      /* generationConfig（2026-11-26 起只对 Gemini 4 Hydrogen / 3.8 Flash 负责）：
+         - 思考档走 thinkingConfig.thinkingLevel。thinkingBudget 是 2.5 及更早的老参数，
+           这两个模型收到会 400；MINIMAL 也不被 3.8 / 4 Hydrogen 支持，故最低只到 low。
+         - 不传 temperature / topP / topK：Gemini 3 起采样参数已移除，Hydrogen 直接忽略，
+           传了只会让人误以为它在起作用。
+         - maxOutputTokens 留空按上游默认（两者单次上限都是 65536），需要限长时由
+           LLM_MAX_TOKENS 显式给。 */
+      const wanted = policy.thinkLevel || 'low';
+      const level = (wanted === 'xhigh' && modelId !== 'gemini-4-hydrogen') ? 'high' : wanted;
+      const genCfg = { thinkingConfig: { thinkingLevel: level.toUpperCase() } };
       const gemMax = maxTokens > 0 ? maxTokens : (policy.maxTokens || 0);
       if (gemMax > 0) genCfg.maxOutputTokens = gemMax;
-      if (variant === 'C') genCfg.maxOutputTokens = 8192;
       return {
         // 原生接口也走流式（alt=sse）：非流式要在服务端等整篇生成完，
         // 期间 CF 边缘无任何字节下发，长答复会撞 ~100s 的 524；流式还能让前端逐段渲染。
@@ -845,10 +834,6 @@ export async function onRequestPost(context) {
     };
     // 首字节：SSE 注释行，客户端解析器直接跳过；作用是让边缘/网关立刻看到数据。
     writer.write(enc.encode(': ping\n\n'));
-    if (variant) {
-      // 对照实验：把实际生效的变体回显给调用方，免得配置没打开却以为测了 B/C
-      writer.write(enc.encode('data: ' + JSON.stringify({ variant: variant }) + '\n\n')).catch(function () { });
-    }
     // 周期心跳：每 hbMs（默认 10s）写一次注释行。上游思考期（DeepSeek 可数十秒无输出）
     // 超过 CF 边缘 ~100s 无数据即 524 断连，故必须持续写。与正文共用同一 writer：
     // 写入按调用顺序排队，每个 ping 都是完整 SSE 帧，不会与其他帧撕裂。

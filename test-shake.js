@@ -200,15 +200,11 @@ async function launchBrowser() {
     for (let i = 0; i < 6; i++) { await page.click('#btnRandom'); await page.waitForTimeout(60); await page.click('#btnConfirm'); await page.waitForTimeout(60); }
     await page.selectOption('#useSelect', '父母');
     await page.waitForTimeout(300);
-    // 补发换模型的场景只在「首稿用 3.6」时成立：先把选中切到只剩 3.6。
-    // （默认已改为 3.8，不切的话本组测不到 retryModelFor 的换模型分支）
-    await page.click('.mchip[data-m="gemini-3.6-flash"]');
-    await page.waitForTimeout(120);
-    await page.click('.mchip[data-m="gemini-3.8-flash"]');
-    await page.waitForTimeout(120);
+    // 补发换模型的场景只在「同族还有另一款」时成立：默认选中的是 3.8 + deepseek，
+    // 点掉 deepseek 只留 3.8，补发就会落到 4 Hydrogen。
     await page.click('.mchip[data-m="deepseek-flash"]');
     await page.waitForTimeout(220);
-    eq('只选 3.6 一列（补发测试前提）', await page.$$eval('.mchip.on', els => els.map(e => e.dataset.m)), ['gemini-3.6-flash']);
+    eq('只选 3.8 一列（补发测试前提）', await page.$$eval('.mchip.on', els => els.map(e => e.dataset.m)), ['gemini-3.8-flash']);
     await pickUse(page);   // 2026-11-03：裸盘面守卫要求先定用神（见 pickUse 注释）
     await page.click('#btnAI');
     await page.waitForTimeout(2500);
@@ -217,9 +213,9 @@ async function launchBrowser() {
     // 还会有第 3 次带 messages 的重写——那不是本组要断言的，故用 >=2。
     eq('残篇触发补全请求（≥2 次）', calls.length >= 2, true);
     eq('补全是一次干净的首轮（不带历史）', calls[1].messages.length, 0);
-    eq('首稿用的是所选模型 3.6', calls[0].model, 'gemini-3.6-flash');
-    // 2026-10-21 晚：同模型重跑对 3.6 的 46% 残篇率无改善，补发改走 3.8
-    eq('补全改用兄弟模型 3.8', calls[1].model, 'gemini-3.8-flash');
+    eq('首稿用的是所选模型 3.8', calls[0].model, 'gemini-3.8-flash');
+    // 2026-11-26：同模型重跑只会再撞同一处，补发改走同族另一款（4 Hydrogen）
+    eq('补全改用同族另一款 4 Hydrogen', calls[1].model, 'gemini-4-hydrogen');
     const shown = await page.evaluate(() => document.body.innerText);
     eq('UI 最终显示的是补全稿（含「结论：」行）', /结论\s*[：:]/.test(shown), true);
     eq('UI 不再停留在半篇内容', shown.indexOf('旺衰相半，须再核旬空') < 0, true);
@@ -249,10 +245,6 @@ async function launchBrowser() {
     for (let i = 0; i < 6; i++) { await page.click('#btnRandom'); await page.waitForTimeout(60); await page.click('#btnConfirm'); await page.waitForTimeout(60); }
     await page.selectOption('#useSelect', '父母');
     await page.waitForTimeout(250);
-    await page.click('.mchip[data-m="gemini-3.6-flash"]');
-    await page.waitForTimeout(80);
-    await page.click('.mchip[data-m="gemini-3.8-flash"]');
-    await page.waitForTimeout(80);
     await page.click('.mchip[data-m="deepseek-flash"]');
     await page.waitForTimeout(160);
     await pickUse(page);   // 2026-11-03：裸盘面守卫要求先定用神（见 pickUse 注释）

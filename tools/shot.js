@@ -36,7 +36,7 @@ const QUESTION = process.env.SHOT_Q || '此 liuyao 项目准确度如何，是�
   const hasCustom = await page.$('#useCustom');
   if (hasCustom) await page.fill('#useCustom', QUESTION);
 
-  // 选模型：只留 MODEL（默认选中含 gemini-3.6-flash，实测 46% 断在中途）
+  // 选模型：只留 MODEL（默认选中 3.8 Flash + deepseek，其余点掉）
   for (let guard = 0; guard < 8; guard++) {
     const changed = await page.evaluate((want) => {
       const chips = Array.from(document.querySelectorAll('.mchip'));
